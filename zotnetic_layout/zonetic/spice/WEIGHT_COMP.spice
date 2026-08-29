@@ -1,0 +1,60 @@
+** sch_path: /foss/designs/a_zonetic2026/XSCHEM/WEIGTH/WEIGHT_COMP.sch
+.subckt WEIGHT_COMP VDD GND VA VB VC VD WE
+*.PININFO VDD:B GND:B VA:I VB:I VC:I VD:I WE:B
+x1 VDD GND WE VA VB VC VD WEIGHT
+x2 VDD net1 WE net2 GND comp._out
+.ends
+
+* expanding   symbol:  a_zonetic2026/XSCHEM/WEIGTH/WEIGHT.sym # of pins=7
+** sym_path: /foss/designs/a_zonetic2026/XSCHEM/WEIGTH/WEIGHT.sym
+** sch_path: /foss/designs/a_zonetic2026/XSCHEM/WEIGTH/WEIGHT.sch
+.subckt WEIGHT VDD GND OUT VA VC VB VD
+*.PININFO VDD:B GND:B VA:I VB:I VC:I VD:I OUT:B
+M2 OUT OUT VDD VDD pfet_06v0 L=1u W=4u nf=1 m=3
+M3 OUT VD net1 GND nfet_06v0 L=1u W=2.48u nf=1 m=2
+M5 OUT VC net2 GND nfet_06v0 L=1u W=2.48u nf=1 m=2
+M6 net2 IN net10 GND nfet_06v0 L=1u W=1.24u nf=1
+M1 OUT OUT net3 GND nfet_06v0 L=1u W=2u nf=1 m=2
+M7 net3 OUT net4 GND nfet_06v0 L=1u W=2u nf=1
+M8 net4 OUT GND GND nfet_06v0 L=1u W=2u nf=1
+M9 OUT VA net5 GND nfet_06v0 L=1u W=2.48u nf=1 m=2
+M10 net5 IN net11 GND nfet_06v0 L=1u W=1.24u nf=1
+M11 OUT VB net6 GND nfet_06v0 L=1u W=2.48u nf=1 m=2
+M12 net6 IN net12 GND nfet_06v0 L=1u W=1.24u nf=1
+M4 net1 IN net13 GND nfet_06v0 L=1u W=1.24u nf=1
+M13 IN IN VDD VDD pfet_06v0 L=1u W=2u nf=1
+M14 net8 IN net9 GND nfet_06v0 L=1u W=0.7u nf=1
+M15 net7 IN net8 GND nfet_06v0 L=1u W=0.7u nf=1
+M16 IN IN net7 GND nfet_06v0 L=1u W=0.7u nf=1
+M17 net9 IN GND GND nfet_06v0 L=1u W=0.7u nf=1
+Vmeas net11 GND 0
+.save i(vmeas)
+Vmeas1 net12 GND 0
+.save i(vmeas1)
+Vmeas2 net10 GND 0
+.save i(vmeas2)
+Vmeas3 net13 GND 0
+.save i(vmeas3)
+.ends
+
+
+* expanding   symbol:  a_zonetic2026/XSCHEM/WEIGTH/comp._out.sym # of pins=5
+** sym_path: /foss/designs/a_zonetic2026/XSCHEM/WEIGTH/comp._out.sym
+** sch_path: /foss/designs/a_zonetic2026/XSCHEM/WEIGTH/comp._out.sch
+.subckt comp._out VDD OUT IN OUT_N VSS
+*.PININFO IN:I VDD:B OUT:O VSS:B OUT_N:O
+x1 VDD IN net1 VSS INV_1
+x2 VDD net1 OUT VSS INV_1
+x3 VDD OUT OUT_N VSS INV_1
+.ends
+
+
+* expanding   symbol:  DESIGN/FINAL/WEIGTH/INV_1.sym # of pins=4
+** sym_path: /foss/designs/DESIGN/FINAL/WEIGTH/INV_1.sym
+** sch_path: /foss/designs/DESIGN/FINAL/WEIGTH/INV_1.sch
+.subckt INV_1 VDD IN OUT VSS
+*.PININFO IN:I VDD:B OUT:O VSS:B
+M2 OUT IN VDD VDD pfet_06v0 L=0.5u W=1.83u nf=1
+M1 OUT IN VSS VSS nfet_06v0 L=0.6u W=1.32u nf=1
+.ends
+

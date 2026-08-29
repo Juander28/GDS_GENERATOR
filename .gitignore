@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv*/
+*.gds
+*.oas
+*.lyrdb
+*.lyrdb.gz
+drc_run_*/
+out/

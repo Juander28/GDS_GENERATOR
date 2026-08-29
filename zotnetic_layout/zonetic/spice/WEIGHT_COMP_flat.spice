@@ -1,0 +1,29 @@
+* netlist plana generada por flatten_spice.py (top: WEIGHT_COMP)
+* 23 MOSFETs; nets fusionadas por V=0: x1_net11->GND, x1_net12->GND, x1_net10->GND, x1_net13->GND
+* m -> fingers: Mx1_M2: m=3 nf=1 -> nf=3; Mx1_M3: m=2 nf=1 -> nf=2; Mx1_M5: m=2 nf=1 -> nf=2; Mx1_M1: m=2 nf=1 -> nf=2; Mx1_M9: m=2 nf=1 -> nf=2; Mx1_M11: m=2 nf=1 -> nf=2
+* para generar el layout: nf = numero de dedos
+.subckt WEIGHT_COMP VDD GND VA VB VC VD WE
+Mx1_M2 WE WE VDD VDD pfet_06v0 L=1u W=4u nf=3
+Mx1_M3 WE VD x1_net1 GND nfet_06v0 L=1u W=2.48u nf=2
+Mx1_M5 WE VB x1_net2 GND nfet_06v0 L=1u W=2.48u nf=2
+Mx1_M6 x1_net2 x1_IN GND GND nfet_06v0 L=1u W=1.24u nf=1
+Mx1_M1 WE WE x1_net3 GND nfet_06v0 L=1u W=2u nf=2
+Mx1_M7 x1_net3 WE x1_net4 GND nfet_06v0 L=1u W=2u nf=1
+Mx1_M8 x1_net4 WE GND GND nfet_06v0 L=1u W=2u nf=1
+Mx1_M9 WE VA x1_net5 GND nfet_06v0 L=1u W=2.48u nf=2
+Mx1_M10 x1_net5 x1_IN GND GND nfet_06v0 L=1u W=1.24u nf=1
+Mx1_M11 WE VC x1_net6 GND nfet_06v0 L=1u W=2.48u nf=2
+Mx1_M12 x1_net6 x1_IN GND GND nfet_06v0 L=1u W=1.24u nf=1
+Mx1_M4 x1_net1 x1_IN GND GND nfet_06v0 L=1u W=1.24u nf=1
+Mx1_M13 x1_IN x1_IN VDD VDD pfet_06v0 L=1u W=2u nf=1
+Mx1_M14 x1_net8 x1_IN x1_net9 GND nfet_06v0 L=1u W=0.7u nf=1
+Mx1_M15 x1_net7 x1_IN x1_net8 GND nfet_06v0 L=1u W=0.7u nf=1
+Mx1_M16 x1_IN x1_IN x1_net7 GND nfet_06v0 L=1u W=0.7u nf=1
+Mx1_M17 x1_net9 x1_IN GND GND nfet_06v0 L=1u W=0.7u nf=1
+Mx2_x1_M2 x2_net1 WE VDD VDD pfet_06v0 L=0.5u W=1.83u nf=1
+Mx2_x1_M1 x2_net1 WE GND GND nfet_06v0 L=0.6u W=1.32u nf=1
+Mx2_x2_M2 net1 x2_net1 VDD VDD pfet_06v0 L=0.5u W=1.83u nf=1
+Mx2_x2_M1 net1 x2_net1 GND GND nfet_06v0 L=0.6u W=1.32u nf=1
+Mx2_x3_M2 net2 net1 VDD VDD pfet_06v0 L=0.5u W=1.83u nf=1
+Mx2_x3_M1 net2 net1 GND GND nfet_06v0 L=0.6u W=1.32u nf=1
+.ends

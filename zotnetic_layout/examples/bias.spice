@@ -1,0 +1,17 @@
+.subckt bias vdd bias1 bias2 bias3 bias4 vss
+*.PININFO bias1:O bias2:O bias3:O bias4:O vdd:B vss:B
+XM4 net3 bias1 vdd vdd pfet_05v0 L=1.0u W=10.0u nf=1 m=1
+XM5 bias3 bias2 net3 vdd pfet_05v0 L=1.0u W=10.0u nf=1 m=1
+XM6 bias3 bias3 vss vss nfet_05v0 L=1.0u W=1.0u nf=1 m=1
+XM7 net2 bias1 vdd vdd pfet_05v0 L=1.0u W=10.0u nf=1 m=1
+XM8 bias4 bias2 net2 vdd pfet_05v0 L=1.0u W=10.0u nf=1 m=1
+XM9 bias4 bias3 net1 vss nfet_05v0 L=1.0u W=5.0u nf=1 m=1
+XM10 net1 bias4 vss vss nfet_05v0 L=1.0u W=5.0u nf=1 m=1
+XM1 bias2 bias2 vdd vdd pfet_05v0 L=1.0u W=2u nf=1 m=1
+XM2 net4 bias1 vdd vdd pfet_05v0 L=1.0u W=10.0u nf=1 m=1
+XM3 bias1 bias2 net4 vdd pfet_05v0 L=1.0u W=10.0u nf=1 m=1
+XM47 net5 bias2 vss vss nfet_05v0 L=1.0u W=1.0u nf=1 m=1
+XM48 net6 bias2 vss vss nfet_05v0 L=1.0u W=1.0u nf=1 m=1
+XM49 bias2 bias2 net6 vss nfet_05v0 L=1.0u W=1.0u nf=1 m=1
+XM50 bias1 bias2 net5 vss nfet_05v0 L=1.0u W=1.0u nf=1 m=1
+.ends

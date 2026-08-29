@@ -1,0 +1,13 @@
+# artefactos generados: se regeneran con el flujo, no se versionan
+__pycache__/
+*.pyc
+.venv*/
+
+# layouts y reportes de verificacion
+*.gds
+*.oas
+*.png
+*.lyrdb
+*.lyrdb.gz
+drc_run_*/
+out/

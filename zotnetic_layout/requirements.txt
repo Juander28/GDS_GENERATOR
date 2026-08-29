@@ -1,0 +1,10 @@
+gdsfactory==9.2.2
+gf180==0.1.1
+kfactory==1.2.2
+klayout==0.29.12
+matplotlib==3.11.0
+numpy==2.5.0
+pillow==12.2.0
+pydantic==2.9.2
+shapely==2.1.2
+sky130==0.13.1

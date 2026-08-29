@@ -1,0 +1,4 @@
+.subckt inv vdd vin vout vss
+XM1 vout vin vdd vdd sky130_fd_pr__pfet_01v8 L=0.15u W=1.0u nf=1 m=1
+XM2 vout vin vss vss sky130_fd_pr__nfet_01v8 L=0.15u W=0.65u nf=1 m=1
+.ends

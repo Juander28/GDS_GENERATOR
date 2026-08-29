@@ -1,0 +1,54 @@
+# Reporte de layout: WEIGHT_COMP
+PDK: gf180
+Transistores: 23
+Nets: 20
+Nets abutidas (difusion compartida): ['x1_net4', 'x1_net7', 'x1_net8', 'x1_net9']
+Ancho de la celda: 65.54 um
+Tamano total: 68.00 x 17.29 um
+
+## Transistores
+  Mx1_M2 PFET pfet_06v0                W=4u L=1u nf=3
+  Mx1_M3 NFET nfet_06v0                W=2.48u L=1u nf=2
+  Mx1_M5 NFET nfet_06v0                W=2.48u L=1u nf=2
+  Mx1_M6 NFET nfet_06v0                W=1.24u L=1u nf=1
+  Mx1_M1 NFET nfet_06v0                W=2u L=1u nf=2
+  Mx1_M7 NFET nfet_06v0                W=2u L=1u nf=1
+  Mx1_M8 NFET nfet_06v0                W=2u L=1u nf=1
+  Mx1_M9 NFET nfet_06v0                W=2.48u L=1u nf=2
+  Mx1_M10 NFET nfet_06v0                W=1.24u L=1u nf=1
+  Mx1_M11 NFET nfet_06v0                W=2.48u L=1u nf=2
+  Mx1_M12 NFET nfet_06v0                W=1.24u L=1u nf=1
+  Mx1_M4 NFET nfet_06v0                W=1.24u L=1u nf=1
+  Mx1_M13 PFET pfet_06v0                W=2u L=1u nf=1
+  Mx1_M14 NFET nfet_06v0                W=0.7u L=1u nf=1
+  Mx1_M15 NFET nfet_06v0                W=0.7u L=1u nf=1
+  Mx1_M16 NFET nfet_06v0                W=0.7u L=1u nf=1
+  Mx1_M17 NFET nfet_06v0                W=0.7u L=1u nf=1
+  Mx2_x1_M2 PFET pfet_06v0                W=1.83u L=0.5u nf=1
+  Mx2_x1_M1 NFET nfet_06v0                W=1.32u L=0.6u nf=1
+  Mx2_x2_M2 PFET pfet_06v0                W=1.83u L=0.5u nf=1
+  Mx2_x2_M1 NFET nfet_06v0                W=1.32u L=0.6u nf=1
+  Mx2_x3_M2 PFET pfet_06v0                W=1.83u L=0.5u nf=1
+  Mx2_x3_M1 NFET nfet_06v0                W=1.32u L=0.6u nf=1
+
+## Conexiones (net -> pines)
+  GND      [POWER]: Mx1_M3.bulk, Mx1_M5.bulk, Mx1_M6.source, Mx1_M6.bulk, Mx1_M1.bulk, Mx1_M7.bulk, Mx1_M8.source, Mx1_M8.bulk, Mx1_M9.bulk, Mx1_M10.source, Mx1_M10.bulk, Mx1_M11.bulk, Mx1_M12.source, Mx1_M12.bulk, Mx1_M4.source, Mx1_M4.bulk, Mx1_M14.bulk, Mx1_M15.bulk, Mx1_M16.bulk, Mx1_M17.source, Mx1_M17.bulk, Mx2_x1_M1.source, Mx2_x1_M1.bulk, Mx2_x2_M1.source, Mx2_x2_M1.bulk, Mx2_x3_M1.source, Mx2_x3_M1.bulk
+  VDD      [POWER]: Mx1_M2.source, Mx1_M2.bulk, Mx1_M13.source, Mx1_M13.bulk, Mx2_x1_M2.source, Mx2_x1_M2.bulk, Mx2_x2_M2.source, Mx2_x2_M2.bulk, Mx2_x3_M2.source, Mx2_x3_M2.bulk
+  WE      : Mx1_M2.drain, Mx1_M2.gate, Mx1_M3.drain, Mx1_M5.drain, Mx1_M1.drain, Mx1_M1.gate, Mx1_M7.gate, Mx1_M8.gate, Mx1_M9.drain, Mx1_M11.drain, Mx2_x1_M2.gate, Mx2_x1_M1.gate
+  x1_IN   : Mx1_M6.gate, Mx1_M10.gate, Mx1_M12.gate, Mx1_M4.gate, Mx1_M13.drain, Mx1_M13.gate, Mx1_M14.gate, Mx1_M15.gate, Mx1_M16.drain, Mx1_M16.gate, Mx1_M17.gate
+  x2_net1 : Mx2_x1_M2.drain, Mx2_x1_M1.drain, Mx2_x2_M2.gate, Mx2_x2_M1.gate
+  net1    : Mx2_x2_M2.drain, Mx2_x2_M1.drain, Mx2_x3_M2.gate, Mx2_x3_M1.gate
+  x1_net1 : Mx1_M3.source, Mx1_M4.drain
+  x1_net2 : Mx1_M5.source, Mx1_M6.drain
+  x1_net3 : Mx1_M1.source, Mx1_M7.drain
+  x1_net4  [ABUTIDA]: Mx1_M7.source, Mx1_M8.drain
+  x1_net5 : Mx1_M9.source, Mx1_M10.drain
+  x1_net6 : Mx1_M11.source, Mx1_M12.drain
+  x1_net8  [ABUTIDA]: Mx1_M14.drain, Mx1_M15.source
+  x1_net9  [ABUTIDA]: Mx1_M14.source, Mx1_M17.drain
+  x1_net7  [ABUTIDA]: Mx1_M15.drain, Mx1_M16.source
+  net2    : Mx2_x3_M2.drain, Mx2_x3_M1.drain
+  VD      : Mx1_M3.gate
+  VB      : Mx1_M5.gate
+  VA      : Mx1_M9.gate
+  VC      : Mx1_M11.gate

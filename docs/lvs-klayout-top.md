@@ -1,0 +1,118 @@
+# Why the KLayout LVS does not match on the top, and netgen does
+
+Written 2026-08-31. Measured on the extraction of `out_integration/B26_A.gds`
+(`out/lvs_klayout_B26_A/B26_A.cir`) against `work_lvs/B26_A_klayout.spice`.
+
+**Read this before anyone concludes the chip is wrong.** It is not.
+
+---
+
+## The one fact that settles it
+
+Both sides carry **the same devices, class by class**, after the same
+`combine_devices()`:
+
+| class | layout | schematic |
+|---|---|---|
+| `NFET_06V0` | 688 | 688 |
+| `PFET_06V0` | 643 | 643 |
+| `CAP_MIM_2F0FF` | 48 | 48 |
+| `PPOLYF_U_1K` | 12 | 12 |
+| `PPOLYF_U` | 11 | 11 |
+| `DIODE_ND2PS_06V0` | 11 | 11 |
+| `DIODE_PD2NW_06V0` | 11 | 11 |
+| `PFET_05V0` / `NFET_05V0` | 9 / 9 | 9 / 9 |
+| **total** | **1442** | **1442** |
+
+Nets 943 against 946, pins 19 against 23. And **netgen -- a different engine, a
+different extraction, and the one that also compares W and L -- says `Circuits
+match uniquely`** on the same pair.
+
+So what follows is about a comparer that cannot traverse the graph, not about a
+layout that disagrees with its schematic.
+
+---
+
+## Four causes, in the order they were found
+
+### 1. The rails could never anchor: they are not called `VDD` and `VSS`
+
+KLayout joins **every label that lands on one net** with `|`. The fifty tie-offs
+hold each control pin of the six digital pads at a rail, and each of those pins
+carries its own pad label, so the extraction's two supplies come out as
+
+    VDD|XN_OE|XP_OE|YN_OE|YP_OE|ZN_OE|ZP_OE
+    VSS|XN_CS|XN_IE|XN_PD|XN_PDRV0|...|ZP_SL
+
+`anclas()` matched whole names, so **`VDD` and `VSS` never anchored** -- the two
+anchors the whole circuit hangs from. Fixed: the name is split on `|` and every
+label counts as an alias.
+
+### 2. The search limits were tuned on a different circuit
+
+`max_depth=30, max_branch_complexity=10000` closes `GRADIENT_NAV2`. On `B26_A`
+-- the same block plus eleven clamps and fifty tie-offs -- they **collapse**:
+
+    depth= 8  branch=  500     829 nets matched,  104 unmatched
+    depth=12  branch=  500     842 nets matched,   80 unmatched
+    depth=16  branch=  500     810 nets matched,   83 unmatched
+    depth=18  branch=  500      32 nets matched, 1722 unmatched
+    depth=30  branch=10000      22 nets matched, 1749 unmatched
+
+There is a cliff between 16 and 18, and past it the search does not degrade a
+little: it falls over entirely. Fixed: `ESCALERA` tries a ladder of settings,
+one comparison per subprocess, and keeps the first match or the best result.
+
+### 3. The anchors help in one place and hurt in another
+
+At 8/500, on the same pair:
+
+    anchors `todas`   (19)    829 matched, 100 unmatched
+    anchors `rieles`  ( 2)    872 matched,  26 unmatched
+    anchors `ninguna` ( 0)    870 matched,  29 unmatched
+
+With all of them the eleven pad anchors pin the clamps correctly and the three
+X/Y/Z output stages come loose; with none the stages match and the comparer
+confuses each pad with its own internal node -- `X` against `X_I`, the two ends
+of the same series resistor. **The rails alone give the best of both**, so the
+ladder carries the anchor mode as a second axis.
+
+### 4. The reference declares four ports that connect to nothing
+
+`XSCHEM/B26_A.sch` leaves `XP_IN`, `XN_IN`, `YP_IN`, `YN_IN` as ports of the top
+that appear **nowhere else in the netlist** -- no device touches them. The layout
+cannot have a counterpart, so those four are unmatched for ever. (`ZP_IN` and
+`ZN_IN` exist in the schematic and do not survive into the port list at all,
+which is the same defect showing its other face.)
+
+Removing them by hand takes the residual from 33 unmatched nets to 29 -- exactly
+the four. **This one is in the schematic and is still open.**
+
+---
+
+## Where it stands
+
+Best measured: **872 of ~900 nets matched, 26 nets and 41 devices left**, and the
+residual is the eleven ESD clamps -- each pad swapped with its own `_I` node
+across the series resistor.
+
+It is not a match, and it should not be recorded as one. What it is:
+
+* not a circuit difference -- see the device table and netgen;
+* a comparer that will not close on twelve near-identical analogue chains plus
+  eleven identical clamps;
+* plus one real defect, the four dangling ports, which is worth fixing in the
+  schematic whatever else happens.
+
+**Why it matters for the submission.** The chipathon's external LVS reads
+`lvs_config.json` and runs **the KLayout deck**, not netgen. On this design the
+deck calls `compare` with its own defaults and no anchors, so it will report
+`Netlists don't match`. That is worth raising with the organisers with these
+numbers attached.
+
+**And it is slow.** On the unfilled GDS the extraction has taken hours in this
+run where an earlier one took thirteen seconds; on the density-filled GDS it did
+not finish at all -- fifty-six minutes without a single progress line, against
+eleven seconds on the same circuit unfilled. The floating fill multiplies the
+nets to extract. Since `LAYOUT_FILE` points at the filled GDS, an external LVS
+reading it may simply time out.

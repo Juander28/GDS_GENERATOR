@@ -99,6 +99,15 @@ WSL2/drvfs is case-insensitive). `layouts_v2/` is genuinely separate.
   `NetlistCrossReference`, taking the circuit pair as an argument —
   `x.each_net_pair(ci)`, `x.each_device_pair(ci)`, `x.each_pin_pair(ci)`.
 
+* **The KLayout deck does not match on the top, and netgen does.** Same devices
+  on both sides -- 1442, class by class -- and netgen, which also compares W and
+  L, says `Circuits match uniquely`. What fails is the comparer, on twelve
+  near-identical analogue chains plus eleven identical clamps. Four causes,
+  measured, in **[`lvs-klayout-top.md`](lvs-klayout-top.md)**; one of them is a
+  real defect in `XSCHEM/B26_A.sch` (four ports that connect to nothing) and is
+  still open. **The chipathon's external LVS runs the KLayout deck, not netgen**,
+  so this is a submission risk, not a curiosity.
+
 ### DRC
 
 * **`M*.2b` is the rule that catches fill.** Every metal has a *second* spacing

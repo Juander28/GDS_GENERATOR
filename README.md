@@ -16,7 +16,7 @@ every fact in this flow that cost a full build to learn.
 |---|---|
 | `zotnetic_layout/` | the **analog layout generator**. Reads a SPICE netlist and draws the cell: placement, abutment, routing, MIM capacitors, poly resistors. `build_block.py` is the entry point. |
 | `flow_scripts/` | the **OpenROAD flow** of the top level: collateral, floorplan, route, DEF-to-GDS, decoupling fill, density fill, DRC and LVS drivers, padring integration, the ESD clamp generator (`esd_layout.py`) and the electromigration check (`check_current_density.py`). A copy of `FINAL/openroad/scripts/` plus its `Makefile`, so the flow can be read without the design tree. |
-| `docs/` | the knowledge. `HANDOFF.md` (start here), `drc-full-deck.md` (**how to run the sign-off DRC so that it actually runs** — read it before believing a clean), `openroad-flow.md` (the long logbook of the top level), `xschem-v2.md`, `top-functionality.md`. `zotnetic_layout/DRC_KLAYOUT.md` covers the block-level DRC. |
+| `docs/` | the knowledge. `HANDOFF.md` (start here), `drc-full-deck.md` (**how to run the sign-off DRC so that it actually runs** — read it before believing a clean), `lvs-klayout-top.md` (**why the KLayout LVS does not match on the top while netgen does** — read it before believing it is broken), `openroad-flow.md` (the long logbook of the top level), `xschem-v2.md`, `top-functionality.md`. `zotnetic_layout/DRC_KLAYOUT.md` covers the block-level DRC. |
 
 ## How to run the generator
 

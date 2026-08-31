@@ -147,6 +147,36 @@ def prepare(ref: Path, cell: str, work: Path) -> Path:
 #: de circuito de verdad.
 LIMITES = (60, 200000) if "--hondo" in sys.argv else (30, 10000)
 
+#: LOS LIMITES NO SON UNO, SON UNA ESCALERA, y se prueba entera.
+#:
+#: `max_depth` y `max_branch_complexity` se afinaron sobre `GRADIENT_NAV2`, donde
+#: 30/10000 cierra el emparejamiento. Sobre `B26_A` -- el mismo bloque mas los
+#: once clamps y los cincuenta tie-offs -- esos mismos numeros lo HUNDEN:
+#:
+#:      depth= 8 branch=  500   829 nets emparejadas,  104 sin pareja
+#:      depth=12 branch=  500   842 nets emparejadas,   80 sin pareja
+#:      depth=16 branch=  500   810 nets emparejadas,   83 sin pareja
+#:      depth=20 branch=  500    22 nets emparejadas, 1749 sin pareja
+#:      depth=30 branch=10000    22 nets emparejadas, 1749 sin pareja
+#:
+#: Hay un acantilado entre 16 y 20, y al otro lado la busqueda no degrada un
+#: poco: se cae entera. Un numero fijo no vale para los dos circuitos, y elegirlo
+#: a ojo es cambiar un fallo por otro -- que es justo lo que ya pasa con las
+#: anclas y por eso `comparar()` prueba las dos. Asi que se mide tambien esto.
+#: Y las anclas son el otro eje: `todas` (todo nombre comun), `rieles` (solo VDD
+#: y VSS) o `ninguna`. Tampoco hay una que gane siempre. En `B26_A`, a 8/500:
+#:
+#:      todas    (19 anclas)   829 emparejadas, 100 sin pareja
+#:      rieles   ( 2 anclas)   872 emparejadas,  26 sin pareja
+#:      ninguna  ( 0 anclas)   870 emparejadas,  29 sin pareja
+#:
+#: Con `todas`, las once anclas de pad fijan bien los clamps y a cambio pierden
+#: las tres etapas de salida X/Y/Z; sin ninguna, las etapas casan y el comparador
+#: confunde cada pad con su nodo interno (`X` contra `X_I`), que es el otro lado
+#: del mismo resistor. Los rieles solos dan lo mejor de los dos.
+ESCALERA = [(30, 10000, "todas"), (8, 500, "rieles"), (12, 500, "rieles"),
+            (12, 500, "ninguna"), (8, 500, "todas")]
+
 #: This PDK's MIM capacitance per area: `cap_mim_2f0fF` is 2.0 fF/um2. The deck
 #: extracts 4e-13 F for a 20 x 10 um plate, which is exactly that.
 _MIM_FF_UM2 = 2.0e-15
@@ -236,8 +266,13 @@ class _Cuenta(kdb.GenericNetlistCompareLogger):
         self.ok += 1
 
 
+#: Los rieles, que son las anclas que sostienen el circuito entero.
+RIELES = ("VDD", "VSS")
+
+
 def comparar(cir: Path, ref: Path, work: Path,
-             profundidad: int = 30, ramas: int = 10000) -> tuple[bool, str]:
+             profundidad: int = 30, ramas: int = 10000,
+             modo: str = "todas") -> tuple[bool, str]:
     """Compares the deck extraction against the reference, with hand-set limits.
 
     **The PDK deck gives no usable verdict on this design**, and the proof is not
@@ -302,31 +337,52 @@ def comparar(cir: Path, ref: Path, work: Path,
     #  los once clamps -- dejaban la comparacion en 11 nets emparejadas, que es
     #  exactamente el numero de anclas, mientras sin ellas avanza. Elegir a ciegas
     #  una de las dos era cambiar un fallo por otro, asi que se mide.
-    def anclas(c):
+    #  UN NOMBRE POR ETIQUETA, no un nombre por net. KLayout junta con `|`
+    #  TODAS las etiquetas que caen sobre una misma net, asi que los dos rieles
+    #  de este diseno no se llaman `VDD` y `VSS` en la extraccion sino
+    #
+    #      VDD|XN_OE|XP_OE|YN_OE|YP_OE|ZN_OE|ZP_OE
+    #      VSS|XN_CS|XN_IE|XN_PD|XN_PDRV0|...|ZP_SL
+    #
+    #  porque los 50 tie-offs atan cada pin de control de los seis pads
+    #  digitales a su riel, y cada uno de esos pines lleva su propia etiqueta.
+    #  Es lo correcto electricamente y es lo que `check_integration` comprueba.
+    #
+    #  Comparando el nombre entero, `VDD` y `VSS` NO ANCLAN. Y son las dos anclas
+    #  que sostienen el circuito entero: sin ellas quedaban 17 anclas de senal,
+    #  30 nets emparejadas y 1728 sin pareja -- que se lee como un LVS que no
+    #  casa y no lo es. Partiendo por `|`, cada etiqueta vale como alias.
+    def anclas(c, modo):
+        if modo == "ninguna":
+            return 0
         ca, cb = nl_cir.top_circuit(), nl_ref.top_circuit()
         if not (ca and cb):
             return 0
-        na = {n.expanded_name().upper(): n for n in ca.each_net()}
-        nb = {n.expanded_name().upper(): n for n in cb.each_net()}
+
+        def etiquetas(net):
+            return [p for p in net.expanded_name().upper().split("|")
+                    if p and not p.startswith("$")]
+
+        na: dict[str, object] = {}
+        for net in ca.each_net():
+            for et in etiquetas(net):
+                na.setdefault(et, net)
+        nb: dict[str, object] = {}
+        for net in cb.each_net():
+            for et in etiquetas(net):
+                nb.setdefault(et, net)
         n = 0
         for nm in sorted(set(na) & set(nb)):
-            if not nm.startswith("$"):
-                c.same_nets(ca, cb, na[nm], nb[nm])
-                n += 1
+            if modo == "rieles" and nm not in RIELES:
+                continue
+            c.same_nets(ca, cb, na[nm], nb[nm])
+            n += 1
         return n
 
-    puestas = anclas(cmp)
+    puestas = anclas(cmp, modo)
     ok = cmp.compare(nl_cir, nl_ref)
-    if not ok:
-        log2 = _Cuenta()
-        cmp2 = kdb.NetlistComparer(log2)
-        cmp2.max_depth = profundidad
-        cmp2.max_branch_complexity = ramas
-        ok2 = cmp2.compare(leer(cir), leer(ref))
-        if ok2 or log2.ok > log.ok:
-            log, ok, puestas = log2, ok2, 0
     detalle = (f"max_depth={profundidad} max_branch_complexity={ramas}, "
-               f"{puestas} anclas: "
+               f"anclas {modo} ({puestas}): "
                f"{log.ok} nets emparejadas, sin pareja: {log.nets} nets, "
                f"{log.disp} dispositivos, {log.pines} pines")
     if log.clases:
@@ -345,22 +401,48 @@ def comparar_aparte(cir: Path, ref: Path, work: Path) -> tuple[bool, str]:
     whole run nor leave it without a verdict, so it is launched apart and if it
     se dice que se cayo.
     """
-    r = subprocess.run([sys.executable, __file__, "--comparar", str(cir), str(ref),
-                        str(work)] + (["--hondo"] if LIMITES[0] != 30 else []),
-                       capture_output=True, text=True, timeout=7200, check=False)
-    output = (r.stdout or "").strip()
-    if r.returncode < 0 or not output:
-        return False, (f"el comparador de KLayout se cayo (codigo {r.returncode}); "
-                       f"no verdict by this route")
-    ok, _, detalle = output.partition("|")
-    return ok.strip() == "MATCH", detalle.strip()
+    #  Y UNA VUELTA POR CADA PELDANO DE `ESCALERA`, cada una en su proceso.
+    #  Aqui no vale un bucle dentro de `comparar()`: llamar al comparador dos
+    #  veces seguidas en el mismo proceso es el otro caso en el que revienta.
+    #  Se para en el primer MATCH; si ninguno casa, se queda el que mas nets
+    #  emparejo, que es el que dice donde mirar.
+    mejor: tuple[bool, str, int] = (False, "", -1)
+    escalera = ESCALERA if LIMITES[0] == 30 else [(*LIMITES, "todas")]
+    for prof, ram, modo in escalera:
+        r = subprocess.run([sys.executable, __file__, "--comparar", str(cir),
+                            str(ref), str(work),
+                            f"--limites={prof},{ram}", f"--anclas={modo}"],
+                           capture_output=True, text=True, timeout=7200,
+                           check=False)
+        output = (r.stdout or "").strip()
+        if r.returncode < 0 or not output:
+            #  Este peldano se cayo. Otro puede no caerse, asi que se sigue.
+            mejor = mejor if mejor[2] >= 0 else (
+                False, f"el comparador de KLayout se cayo (codigo {r.returncode}); "
+                       f"no verdict by this route", -1)
+            continue
+        ok, _, detalle = output.partition("|")
+        ok = ok.strip() == "MATCH"
+        detalle = detalle.strip()
+        m = re.search(r"(\d+) nets emparejadas", detalle)
+        cuantas = int(m.group(1)) if m else 0
+        if ok:
+            return True, detalle
+        if cuantas > mejor[2]:
+            mejor = (False, detalle, cuantas)
+    return mejor[0], mejor[1] or "no verdict by this route"
 
 
 def main() -> int:
     if "--comparar" in sys.argv:
         i = sys.argv.index("--comparar")
         cir, ref, work = (Path(x) for x in sys.argv[i + 1:i + 4])
-        ok, detalle = comparar(cir, ref, work, *LIMITES)
+        lim = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--limites=")),
+                   None)
+        limites = tuple(int(v) for v in lim.split(",")) if lim else LIMITES
+        modo = next((a.split("=", 1)[1] for a in sys.argv
+                     if a.startswith("--anclas=")), "todas")
+        ok, detalle = comparar(cir, ref, work, *limites, modo=modo)
         print(f"{'MATCH' if ok else 'NO'}|{detalle}")
         return 0
 

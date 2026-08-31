@@ -253,9 +253,22 @@ class Flattener:
                 #  `_cap_um` no tiene nada de condensador: es la regla de Xschem
                 #  para una dimension, con sufijo o en metros. r_width/r_length
                 #  la siguen igual.
+                #  `W`/`L` VALEN IGUAL QUE `r_width`/`r_length`. Los simbolos
+                #  de resistencia de xschem usan los segundos, pero una linea
+                #  SPICE escrita a mano usa los primeros -- y asi viene la del
+                #  clamp de ESD de los organizadores:
+                #
+                #      RR1 to_gate ASIG5V VDD ppolyf_u W=40e-6 L=10e-6
+                #
+                #  Buscando solo `r_width` salia `W=0 L=0 R=0` en la referencia
+                #  de LVS. Once resistencias a cero entre el pad y el nucleo no
+                #  emparejan con nada, y como estan justo en medio del camino se
+                #  llevan por delante todo el grafo: la comparacion de `B26_A`
+                #  se quedaba en 11 nets emparejadas de 1778.
+                ancho = p.get("r_width") or p.get("w") or "0"
+                largo = p.get("r_length") or p.get("l") or "0"
                 self.res_info.append(
-                    (flat, nets, pos[-1],
-                     _cap_um(p.get("r_width", "0")), _cap_um(p.get("r_length", "0")),
+                    (flat, nets, pos[-1], _cap_um(ancho), _cap_um(largo),
                      int(float(p.get("s", "1")))))
                 continue
 

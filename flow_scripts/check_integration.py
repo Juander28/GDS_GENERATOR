@@ -13,7 +13,12 @@ What has to come out:
 
     VDD   the six OE pins, the supply pin, and the block's VDD pad
     VSS   the other 42 control pins, the supply pin, and the block's VSS pad
-    each analogue signal, on its own with the block's pin of the same name
+    each analogue signal on its own, and NOT with the block's pin: since the
+    eleven io_secondary_5p0 clamps went in, the signal passes THROUGH one --
+    pad -> ASIG5V, to_gate -> block -- so the two sides are different nets by
+    design.  The two hops are checked separately, and the two sides are required
+    to be DIFFERENT: equal means the series resistor is bypassed and the ESD is
+    inert, which is a real failure that no DRC reports
     each <sig>_OUT with the block's <sig>
     each <sig>_IN alone: the receiver is deliberately unconnected
 """
@@ -30,7 +35,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_collateral as bc                                    # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-GDS = ROOT / "out_integration" / "B26_A.gds"
+#: Que GDS se comprueba. Por defecto el de la integracion sin rellenar, que es
+#: el que tiene el circuito; se le puede pasar otro por argumento -- el
+#: `_filled`, por ejemplo -- para confirmar que el relleno de densidad no ha
+#: tocado ninguna conexion. El relleno son cuadrados FLOTANTES, asi que la
+#: respuesta deberia ser identica: si cambia, el relleno esta conectando algo.
+GDS = Path(sys.argv[1]) if len(sys.argv) > 1 and not sys.argv[1].startswith("-") \
+      else ROOT / "out_integration" / "B26_A.gds"
 DEFP = ROOT / "padframe" / "B26_A.def"
 CONS = ROOT / "constraints" / "B26_A_pins.tcl"
 DBU_PAD = 200.0
@@ -79,6 +90,79 @@ def pines():
 def rail():
     """{pin: VDD|VSS} for the tie-offs, from what the generator wrote."""
     return dict(re.findall(r"^set RAIL\((\S+)\) (\S+)$", CONS.read_text(), re.M))
+
+
+def clamps():
+    """{pin: {ASIG5V: (capa,x,y), to_gate: (capa,x,y)}} de cada clamp de ESD.
+
+    Los once `io_secondary_5p0` van EN SERIE entre el pad y el bloque: el pad
+    ataca `ASIG5V` y el nucleo cuelga de `to_gate`, con la resistencia en medio.
+    Asi que ya NO vale preguntar si el pin del borde y el del bloque estan en la
+    misma net -- ahora tienen que estar en nets DISTINTAS, y si salen en la misma
+    es que la resistencia esta puenteada y el ESD no protege nada.
+
+    La posicion sale del DEF de la integracion (donde quedo cada instancia) mas
+    el LEF del clamp (donde tiene sus pines), los dos leidos de fichero.
+    """
+    top_def = ROOT / "out_integration" / "B26_A_routed.def"
+    #  QUE CELDA es el clamp lo dice `integrate_padframe.py` en las constraints,
+    #  no este fichero: paso de ser `io_secondary_5p0` a ser `ESD_CDM` y con el
+    #  nombre a mano esta comprobacion se quedaba sin clamps que mirar, exigia
+    #  que el pad y el bloque salieran en la misma net -- que es justo el fallo
+    #  que busca -- y cantaba once problemas donde no habia ninguno.
+    m = re.search(r"^set ESD_CELL (\S+)", CONS.read_text(), re.M)
+    if not m:
+        return {}
+    celda = m.group(1)
+    lef = ROOT / "lef" / f"{celda}.lef"
+    if not lef.exists():
+        return {}
+    txt = top_def.read_text()
+    dbu = int(re.search(r"UNITS DISTANCE MICRONS (\d+)", txt).group(1))
+    sitio = {mm.group(1): (int(mm.group(2)) / dbu, int(mm.group(3)) / dbu)
+             for mm in re.finditer(
+                 rf"^\s*- x_esd_(\S+) {celda} \+ \S+ \( (-?\d+) (-?\d+) \)",
+                 txt, re.M)}
+    #  Los rects del LEF ya llevan sumado el ORIGIN del macro, igual que en
+    #  `macro_lef`; `place_macro` situa la esquina de la caja SIZE.
+    ltxt = lef.read_text()
+    orig = re.search(r"ORIGIN\s+([-\d.]+)\s+([-\d.]+)\s*;", ltxt)
+    ox0, oy0 = (float(v) for v in orig.groups()) if orig else (0.0, 0.0)
+    #  Y CUALES son sus dos pines de senal, por DIRECCION y no por nombre: el
+    #  de entrada mira al pad y el de salida al bloque. `io_secondary_5p0` los
+    #  llama ASIG5V/to_gate y `ESD_CDM` PAD/CORE.
+    ltxt_dir = ltxt
+    lado = {}
+    for mm in re.finditer(r"PIN (\S+)\s+DIRECTION (\S+) ;", ltxt_dir):
+        if mm.group(2) == "INPUT":
+            lado["pad"] = mm.group(1)
+        elif mm.group(2) == "OUTPUT":
+            lado["core"] = mm.group(1)
+    if "pad" not in lado or "core" not in lado:
+        return {}
+    pines = {}
+    for term in (lado["pad"], lado["core"]):
+        blq = re.search(rf"PIN {term}\b(.*?)END {term}\b", ltxt, re.S)
+        if not blq:
+            continue
+        capa = None
+        for line in blq.group(1).splitlines():
+            mm = re.match(r"\s*LAYER (\S+) ;", line)
+            if mm:
+                capa = mm.group(1); continue
+            mm = re.match(r"\s*RECT ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ;", line)
+            if mm and capa:
+                a, b, c, d = (float(v) for v in mm.groups())
+                pines[term] = (capa.lower().replace("metal", "m"),
+                               (a + c) / 2 + ox0, (b + d) / 2 + oy0)
+                break
+    out = {}
+    for pin, (x, y) in sitio.items():
+        d = {t: (l, x + dx, y + dy) for t, (l, dx, dy) in pines.items()}
+        #  Se devuelven con nombre CANONICO, para que quien compare no tenga que
+        #  saber como los llama cada celda.
+        out[pin] = {"ASIG5V": d[lado["pad"]], "to_gate": d[lado["core"]]}
+    return out
 
 
 def pines_macro():
@@ -144,6 +228,21 @@ def main() -> int:
 
     l2n = kdb.LayoutToNetlist(kdb.RecursiveShapeIterator(ly, top, []))
     lay = {n: l2n.make_polygon_layer(ly.layer(a, b), n) for n, a, b in capas}
+    #  EL RELLENO TAMBIEN, o correr esto sobre el `_filled` no demuestra nada.
+    #  El dummy vive en el datatype 4 de cada metal y este trazado leia solo el
+    #  0, asi que el fichero relleno y el sin rellenar daban exactamente el mismo
+    #  resultado -- no porque el relleno estuviese bien, sino porque no se
+    #  miraba. Metido como capa propia y conectado a su metal, un cuadrado que
+    #  toque metal de verdad se suma a esa net; los que no tocan nada quedan cada
+    #  uno en la suya, que es lo que tienen que hacer.
+    for n, a, _b in capas:
+        if not n.startswith("m"):
+            continue
+        idx = ly.layer(a, 4)
+        if ly.is_valid_layer(idx) and not ly.begin_shapes(top, idx).at_end():
+            relleno = l2n.make_polygon_layer(idx, f"{n}_fill")
+            l2n.connect(relleno)
+            l2n.connect(lay[n], relleno)
     for a, b in PAREJAS:
         l2n.connect(lay[a], lay[b])
     for x in lay.values():
@@ -189,19 +288,48 @@ def main() -> int:
     #  two have to come out on the same net. `XP_OUT` on the boundary is `XP` on
     #  the block; the rest keep their name.
     macro = pines_macro()
-    print(f"\n  the {len(macro)} signals, boundary against block:")
-    for borde, (l, x, y) in sorted(macro.items()):
+    esd = clamps()
+    def sonda(t3):
+        l, x, y = t3
         n = l2n.probe_net(lay[l], kdb.DPoint(x, y))
-        suyo = n.expanded_name() if n else None
+        return n.expanded_name() if n else None
+
+    malos = 0
+    print(f"\n  the {len(macro)} signals, pad -> clamp -> block:")
+    for borde, donde in sorted(macro.items()):
+        suyo = sonda(donde)
         mio = de_pin.get(borde)
+        c = esd.get(borde)
         if suyo is None:
             print(f"    {borde:8s} no metal at the block's pin")
-            fallos += 1
-        elif mio is None or suyo != mio:
-            print(f"    {borde:8s} boundary on {mio}, block on {suyo}")
-            fallos += 1
-    print(f"    {len(macro) - fallos if fallos <= len(macro) else 0} of "
-          f"{len(macro)} reach the block")
+            malos += 1
+            continue
+        if not c:
+            #  sin clamp -- las seis digitales -- el pad ataca al bloque directo
+            if mio is None or suyo != mio:
+                print(f"    {borde:8s} boundary on {mio}, block on {suyo}")
+                malos += 1
+            continue
+        #  CON CLAMP la senal pasa por el, asi que se comprueba salto a salto.
+        a = sonda(c["ASIG5V"]) if "ASIG5V" in c else None
+        g = sonda(c["to_gate"]) if "to_gate" in c else None
+        problemas = []
+        if mio is None or a is None or a != mio:
+            problemas.append(f"el pad no llega al clamp (pad {mio}, ASIG5V {a})")
+        if g is None or g != suyo:
+            problemas.append(f"el clamp no llega al bloque (to_gate {g}, bloque {suyo})")
+        #  Y LOS DOS LADOS TIENEN QUE SER NETS DISTINTAS. Iguales significa que la
+        #  resistencia en serie esta puenteada: el ESD queda inerte y no lo dice
+        #  ningun DRC. Paso de verdad -- los clamps caian dentro del canal de
+        #  escape de los pines y la placa de metal2 del escape los cortocircuitaba.
+        if a is not None and g is not None and a == g:
+            problemas.append(f"resistencia PUENTEADA: los dos lados en {a}")
+        if problemas:
+            print(f"    {borde:8s} " + "; ".join(problemas))
+            malos += 1
+    fallos += malos
+    print(f"    {len(macro) - malos} of {len(macro)} reach the block"
+          + (f", {len(esd)} through their clamp" if esd else ""))
 
     esperados_solos = {p for p in P if p.endswith("_IN")}
     solos = [v[0] for n, v in grupo.items() if len(v) == 1]

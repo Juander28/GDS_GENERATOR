@@ -720,6 +720,29 @@ def _stretch_short_trunks(spans, lay, cfg) -> None:
             room = _M2_SPACING + _VIA_PAD_M2 - cfg.trunk_w / 2
             lo = items[i - 1][1][1] + room if i else -0.5
             hi = items[i + 1][1][0] - room if i + 1 < len(items) else lay.width + 0.5
+
+            #  ESTIRAR SOLO PUEDE CRECER. `lo` y `hi` acotan hasta donde llega la
+            #  EXTENSION; no son la posicion del trunk. Sin este par de lineas el
+            #  `max(lo, ...)` de abajo puede empujar el extremo izquierdo hacia la
+            #  DERECHA de donde estaba, y entonces el trunk deja de cubrir sus
+            #  propios pads de via: la net sale ABIERTA y el trunk queda flotando,
+            #  sin un solo terminal.
+            #
+            #  Lo provocan los valores por defecto, que dan por hecho que la celda
+            #  empieza cerca de x=0. Medido en WEIGHT_COMP: `x1_net6` tiene sus dos
+            #  accesos en x=-1.785 y x=-0.76 -- negativos, porque las tomas de
+            #  sustrato asoman por la izquierda --, es el primero de su pista, y
+            #  con `lo=-0.5` su trunk se dibujo en [-0.5, 0.81]. Los dos pads se
+            #  quedaron fuera: XM11.source por un lado, XM12.drain por otro, y el
+            #  trunk en medio sin conectar a nada.
+            #
+            #  Y no falla solo en el LVS. El pad de la derecha quedo a 0.07 um del
+            #  trunk que ya no le pertenece: una `M2.2a` de las de 0.28. El
+            #  circuito abierto y la violacion de espaciado son el MISMO defecto,
+            #  que es lo que costo verlo -- se leen como dos problemas distintos.
+            lo = min(lo, xs[0])
+            hi = max(hi, xs[1])
+
             want = (want_len - (xs[1] - xs[0])) / 2
             xs[0] = _snap(max(lo, xs[0] - want))
             xs[1] = _snap(min(hi, xs[1] + want + max(0.0, lo - (xs[0] - want))))

@@ -281,8 +281,52 @@ def comparar(cir: Path, ref: Path, work: Path,
     cmp = kdb.NetlistComparer(log)
     cmp.max_depth = profundidad
     cmp.max_branch_complexity = ramas
-    ok = cmp.compare(leer(cir), leer(ref))
-    detalle = (f"max_depth={profundidad} max_branch_complexity={ramas}: "
+    nl_cir, nl_ref = leer(cir), leer(ref)
+
+    #  LOS PINES DEL TOP, COMO ANCLAS. Son iguales por construccion -- los dos
+    #  lados heredan el nombre del mismo `info.yaml` --, asi que decirselo al
+    #  comparador no es ayudarle a hacer trampa: es darle un dato que ya
+    #  teniamos y el no puede deducir.
+    #
+    #  Sin ellas, el comparador se enreda entre las CUATRO CADENAS, que son
+    #  cuatro rotaciones del mismo circuito y por tanto casi indistinguibles:
+    #  emparejaba el `XM15` de la cadena de `S1P` con el de la de `S4P`. Medido
+    #  en GRADIENT_NAV2: 857 nets emparejadas y 21 nets + 66 dispositivos
+    #  sueltos sin anclas; con ellas, 905 emparejadas y 1 net + 2 dispositivos.
+    #
+    #  Subir `max_depth` y `max_branch_complexity` NO es la salida, aunque lo
+    #  parezca: probado a 50/100000 y a 80/1000000, la busqueda se degrada y
+    #  baja a 262 emparejadas.
+    #  PERO SE PRUEBAN LAS DOS, y se queda la mejor. Las anclas ayudan cuando el
+    #  circuito es simetrico y estorban cuando no: en `B26_A` -- el bloque mas
+    #  los once clamps -- dejaban la comparacion en 11 nets emparejadas, que es
+    #  exactamente el numero de anclas, mientras sin ellas avanza. Elegir a ciegas
+    #  una de las dos era cambiar un fallo por otro, asi que se mide.
+    def anclas(c):
+        ca, cb = nl_cir.top_circuit(), nl_ref.top_circuit()
+        if not (ca and cb):
+            return 0
+        na = {n.expanded_name().upper(): n for n in ca.each_net()}
+        nb = {n.expanded_name().upper(): n for n in cb.each_net()}
+        n = 0
+        for nm in sorted(set(na) & set(nb)):
+            if not nm.startswith("$"):
+                c.same_nets(ca, cb, na[nm], nb[nm])
+                n += 1
+        return n
+
+    puestas = anclas(cmp)
+    ok = cmp.compare(nl_cir, nl_ref)
+    if not ok:
+        log2 = _Cuenta()
+        cmp2 = kdb.NetlistComparer(log2)
+        cmp2.max_depth = profundidad
+        cmp2.max_branch_complexity = ramas
+        ok2 = cmp2.compare(leer(cir), leer(ref))
+        if ok2 or log2.ok > log.ok:
+            log, ok, puestas = log2, ok2, 0
+    detalle = (f"max_depth={profundidad} max_branch_complexity={ramas}, "
+               f"{puestas} anclas: "
                f"{log.ok} nets emparejadas, sin pareja: {log.nets} nets, "
                f"{log.disp} dispositivos, {log.pines} pines")
     if log.clases:
@@ -359,6 +403,21 @@ def main() -> int:
         #  The deck's verdict is good for the blocks. Not for the top: it fails
         #  even comparing the layout against its own extraction, so there
         #  manda la comparacion conducida a mano (ver `comparar`).
+        #  QUE NO ARRANQUE NO ES QUE NO CUADRE. Si el runner del PDK se muere
+        #  antes de comparar -- un import que falta, un GDS ilegible -- no hay
+        #  veredicto que dar, y decir "NO CUADRA" manda a buscar un fallo de
+        #  circuito donde solo hay uno de herramienta. Medido: llamado con el
+        #  python del venv sale `ModuleNotFoundError: No module named 'docopt'`,
+        #  y esta funcion lo reportaba como desajuste del top.
+        salida = r.stdout + r.stderr
+        if not ok and ("Traceback (most recent call last)" in salida
+                       or "ModuleNotFoundError" in salida):
+            motivo = next((l for l in salida.splitlines()
+                           if "Error" in l or "error" in l), "sin detalle")
+            print(f"  {name:14s} EL DECK NO ARRANCO -- {motivo.strip()[:90]}")
+            print(f"                 -> {log}")
+            bad += 1
+            continue
         if ok or not cir.exists():
             print(f"  {name:14s} {'match' if ok else 'NO CUADRA'}   -> {log}")
             bad += 0 if ok else 1

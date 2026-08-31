@@ -640,10 +640,24 @@ def parchear_sch(lines: list[str]) -> bool:
     an instance of `devices/code_shown.sym` with `only_toplevel=true`, the same
     pattern the `XSCHEM/TEST*` benches use.
     """
+    #  EL BLOQUE VA EN TODOS LOS ESQUEMATICOS QUE PUEDEN SER TOP, no solo en el
+    #  suyo. `only_toplevel=true` hace que xschem lo emita **unicamente cuando
+    #  ese esquematico es el top**, que es justo lo que se quiere para no
+    #  duplicarlo dentro de una jerarquia. Pero desde que el top de verdad es
+    #  `B26_A` -- nuestro bloque mas los once clamps de ESD --, exportar B26_A
+    #  dejaba fuera los 156 condensadores que SI estan en el GDS.
+    #
+    #  Medido: la referencia de B26_A salia con 1911 dispositivos cuando
+    #  GRADIENT_NAV2 solo ya tiene 1968. La cuenta cuadra exacta,
+    #  1968 - 156 + 99 = 1911 (los 99 son los once clamps), y el LVS de la
+    #  integracion se caia entero: 11 nets emparejadas de 1778.
+    destinos = [SCH]
+    otro = PROJECT / "XSCHEM" / "B26_A.sch"
+    if otro != SCH and otro.exists():
+        destinos.append(otro)
     if not SCH.exists():
         print(f"  WARNING: {SCH} not found; leaving the schematic alone")
         return False
-    text = SCH.read_text()
     cuerpo = "\n".join(lines)
     block = ("C {devices/code_shown.sym} 700 700 0 0 {name=" + NOMBRE_BLOQUE
               + " only_toplevel=true value=\"\n"
@@ -651,12 +665,30 @@ def parchear_sch(lines: list[str]) -> bool:
               + "* the gaps between macros. WRITTEN BY scripts/decap_fill.py -- do\n"
               + "* not edit by hand: it must be exactly what is in the GDS.\n"
               + cuerpo + "\n\"}\n")
-    patron = re.compile(r"^C \{devices/code_shown\.sym\}[^\n]*name=" + NOMBRE_BLOQUE
-                        + r"\b.*?\"\}\n", re.S | re.M)
-    nuevo, n = patron.subn(block, text)
-    if not n:
-        nuevo = text.rstrip("\n") + "\n" + block
-    SCH.write_text(nuevo)
+    #  `code.sym` **o** `code_shown.sym`. El bloque se escribio con el primero
+    #  durante un tiempo, y un patron que solo miraba el segundo no lo encontraba:
+    #  en vez de sustituirlo anadia otro, y el esquematico acabo con DOS bloques
+    #  DESACOPLE -- 384 lineas de dispositivo para 291 nombres distintos, o sea
+    #  con nombres repetidos entre ellos. El netlist exportado se quedaba con los
+    #  156 del bloque viejo y el GDS llevaba los nuevos, asi que el LVS del top no
+    #  cuadraba por dos dispositivos y ninguna de las dos cifras era la de nadie.
+    #
+    #  Y se sustituyen TODOS, no el primero: si ya hay duplicados, esto los funde
+    #  en uno en la siguiente pasada en vez de arrastrarlos para siempre.
+    patron = re.compile(r"^C \{devices/code(?:_shown)?\.sym\}[^\n]*name="
+                        + NOMBRE_BLOQUE + r"\b.*?\"\}\n", re.S | re.M)
+    #  Se quitan TODOS y se escribe UNO. Sustituir en el sitio y luego limpiar
+    #  duplicados es facil de escribir mal -- el segundo barrido se lleva por
+    #  delante el bloque recien puesto, porque casa el mismo patron.
+    for dst in destinos:
+        text = dst.read_text()
+        nuevo, n = patron.subn("", text)
+        nuevo = nuevo.rstrip("\n") + "\n" + block
+        if n > 1:
+            print(f"  {n} bloques {NOMBRE_BLOQUE} en {dst.name} -> uno solo")
+        dst.write_text(nuevo)
+        if dst != SCH:
+            print(f"  el mismo bloque escrito tambien en {dst.name} (es el top real)")
     return True
 
 

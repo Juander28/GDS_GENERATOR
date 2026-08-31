@@ -53,6 +53,43 @@ proc mfg {v} { return [expr {round($v / 0.005) * 0.005}] }
 #: alineacion se pierde al colocarlo y el router vuelve a aterrizar de refilon.
 proc ontrack {v} { return [expr {round($v / 0.56) * 0.56}] }
 
+#: EL `ORIGIN` DEL MACRO ENTRA EN LA CUENTA, y olvidarlo deshace lo anterior.
+#: `place_macro -location` situa la esquina de la caja SIZE, que en coordenadas
+#: del bloque esta en `-ORIGIN`. Asi que un pad que dentro del bloque vive en
+#: `0.28 + k*0.56` acaba en el top en `location + ORIGIN + 0.28 + k*0.56`: si
+#: `ORIGIN` no es multiplo del paso, toda la alineacion se pierde aunque
+#: `location` si lo sea. `OPAM_LIN_flat` tiene `ORIGIN 1.260`, que es 0.14 fuera
+#: de rejilla, y `WEIGHT_COMP` tiene `3.945 3.550`.
+#:
+#: Coste real: `[ERROR DRT-0073] No access point for x1_x1/INP`, que aborta el
+#: ruteo entero. Y es el mismo razonamiento que ya hace `integrate_top.tcl` un
+#: nivel mas arriba.
+proc lef_origins {} {
+    set out [dict create]
+    foreach f [glob -nocomplain [file join [file dirname [info script]] .. lef *.lef]] {
+        set mname [file rootname [file tail $f]]
+        set fh [open $f r]; set txt [read $fh]; close $fh
+        if {[regexp {\n\s*ORIGIN\s+([-\d.]+)\s+([-\d.]+)\s*;} $txt -> ox oy]} {
+            dict set out $mname [list $ox $oy]
+        } else {
+            dict set out $mname [list 0.0 0.0]
+        }
+    }
+    return $out
+}
+
+#: `location` tal que `location + origen` cae en la rejilla de ruteo.
+#:
+#: Redondea HACIA ARRIBA, no al mas cercano. Al mas cercano, la primera columna
+#: se iba 0.14 um por debajo del borde del core y `MPL-0034` abortaba
+#: (`Cannot place x1_x1 at (9.38, ...), outside of the core (9.52, ...)`).
+#: Hacia arriba el macro nunca retrocede, y lo que se paga es como mucho un paso
+#: de pista -- 0.56 um -- por fila y por columna, sobre un floorplan parametrico.
+proc ontrack_org {v org} {
+    set k [expr {ceil(($v + $org) / 0.56 - 1e-9)}]
+    return [expr {$k * 0.56 - $org}]
+}
+
 #: `MIMTM.1` pide 1.2 um de la placa de un MIM a cualquier otro metal4. Evitar el
 #: overlap is not enough: the power straps brushed past and 41
 #: violations. The LEF already carries the layer spacing; this adds the rest.
@@ -202,6 +239,7 @@ set core0   [$block getCoreArea]
 set org_x   [expr {[$core0 xMin] / double($dbu)}]
 set org_y   [expr {[$core0 yMin] / double($dbu)}]
 
+set ORIGENES [lef_origins]
 set masters [dict create]
 set inst_of [dict create]
 set hlanes  {}
@@ -211,9 +249,12 @@ foreach s $shelves {
     lassign $s sh smembers
     foreach mem $smembers {
         lassign $mem name x w
+        set mname0 [[[$block findInst $name] getMaster] getName]
+        lassign [expr {[dict exists $ORIGENES $mname0] ?
+                       [dict get $ORIGENES $mname0] : [list 0.0 0.0]}] mox moy
         place_macro -macro_name $name -orientation R0 \
-            -location [list [ontrack [expr {$org_x + $x}]] \
-                            [ontrack [expr {$org_y + $y}]]]
+            -location [list [ontrack_org [expr {$org_x + $x}] $mox] \
+                            [ontrack_org [expr {$org_y + $y}] $moy]]
         set mn [[[$block findInst $name] getMaster] getName]
         dict set masters $mn 1
         dict set inst_of $mn $name

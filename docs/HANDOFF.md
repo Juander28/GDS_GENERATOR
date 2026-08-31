@@ -1,6 +1,6 @@
 # HANDOFF — where this design stands, and how to pick it up cold
 
-Last updated **2026-08-29**. Written so a chat that has never seen this tree can
+Last updated **2026-08-31**. Written so a chat that has never seen this tree can
 carry on without re-deriving anything. Read this first, then
 `openroad/README.md` (the long logbook) and `zotnetic_layout/DRC_KLAYOUT.md`.
 
@@ -116,6 +116,42 @@ WSL2/drvfs is case-insensitive). `layouts_v2/` is genuinely separate.
 * The DRC deck **lies when it runs out of memory**: it exits without writing
   `.lyrdb` files and that reads as zero violations. `drc_klayout.py` therefore
   fails loudly if there is not a single `.lyrdb`.
+* **`MSLOT.1` had never actually run, and nobody could tell.** The deck is
+  normally driven table by table, and in that mode the PDK's own `mslot` table
+  **crashes** — `undefined method 'sized' for nil:NilClass`, a bug in the deck,
+  not in the design. A crashed table writes **no `.lyrdb`**, and a check that
+  counts result files reads that as *clean*. So every "63 tables, 0 violations"
+  this project ever produced was true about what it said and silent about
+  `MSLOT.1`.
+
+  Two things came out of it. `drc_klayout.py::completo()` no longer accepts a
+  run where only `mslot` died without also checking the table count — a run
+  killed at table 48 of 63 had been reading as clean because the `mslot`
+  message arrived first. And there is now a **second way to run the deck that
+  does not crash**:
+
+      DRC_MODE=deep DRC_THR=1 DRC_MP=1 make drc T=B26_A TOP_OUT=out_integration ARGS=B26_A_FILLED
+
+  One `main` table in `deep` mode, single-threaded. Slow, fits in memory, and
+  `mslot` runs. **This is the run that decides whether the deck passes.** Split
+  tables are the fast screen, not the verdict.
+
+  `drc_klayout.py::mslot1_local()` is the fallback: our own implementation of
+  the rule, so a crashed table still gets an answer. It had a unit bug of its
+  own — it read database units as nanometres and so measured 15 um where the
+  rule says 30. Fixed by taking `um()` from `ly.dbu`.
+* **exit 137 is SIGKILL is out of memory.** Docker on native Linux imposes no
+  memory or CPU cap of its own (the cgroup reads `max`); on WSL2 the cap is
+  whatever the VM was given in `%UserProfile%\.wslconfig`. If a DRC dies at
+  137, the machine is the limit, not the tool.
+* **`PR_bndry` is layer 0/0, and exactly one is allowed at top level.** Two of
+  them is what stopped the organisers from regenerating B26's DEF:
+  `Top level has 2 PR_bndry shapes. only one is allowed`. Flattening the routed
+  DEF brings up the block's own boundary alongside the die's.
+  `def_to_gds.py::una_sola_frontera()` now counts 0/0 shapes **unmerged** —
+  merged, two touching rectangles look like one — and aborts the write rather
+  than shipping a GDS the organisers' flow will reject. **Check this on every
+  GDS that leaves this tree.**
 
 ### Density fill
 
@@ -129,6 +165,28 @@ WSL2/drvfs is case-insensitive). `layouts_v2/` is genuinely separate.
 * The rules are **global**, not windowed: `CHIP = extent.sized(0.0)` and
   `ratio = layer.area / CHIP.area`. Targets: COMP 25 %, Poly2 14 %,
   Metal1..Metal5 30 %.
+
+### Current density (electromigration)
+
+* **DRC will never say a word about it.** Electromigration is not a design rule,
+  it is a current limit, and the DEF has no idea how much current runs through
+  anything. `integrate_top.tcl` sizes the power ring in a **comment**; a comment
+  is not a measurement. `scripts/check_current_density.py` reads the routed DEF,
+  measures what is drawn, and contrasts it with what each net has to carry.
+* The numbers: the block draws **14.81 mA at 5 V** (measured on the
+  RC-extracted layout), and the PDK's limit at **125 C** — the column that
+  assumes nothing — is **0.67 mA/um** of line and **0.18 mA per via cut**. So a
+  supply needs 22.10 um of metal and 83 via cuts per path.
+* **Do not judge a supply by its narrowest segment.** That criterion failed the
+  ring at 0.38 um — which is the width of the 48 **tie-off stubs**, leaves that
+  hold a control pin at a rail and carry none of the block's current. What
+  limits is how much copper **crosses** a line between the edge, where the
+  current comes in, and the block, where it is spent. The script cuts the die in
+  half on each axis and adds up the widths crossing: 48.00 um against 22.10
+  required, per supply, per direction.
+* A regex that stopped at the first `+ LAYER ... WIDTH` line read **two of the
+  five** non-default rules and called the run clean. `[^\n]*` at the end of the
+  repetition fixed it — the Metal2..Metal4 lines carry a trailing `SPACING`.
 
 ### Layout / routing
 
@@ -151,86 +209,135 @@ WSL2/drvfs is case-insensitive). `layouts_v2/` is genuinely separate.
 
 ---
 
-## 4. The secondary ESD: the organisers' cell, adopted as drawn
+## 4. The secondary ESD: their circuit, our layout
 
-The rule the user set: **run DRC and LVS on their GDS; if it passes, use it as
-it is; redraw it only if it fails.** It passed, so it is used.
+The history matters, because the decision was reversed once.
+
+**First** the rule the user set was: run DRC and LVS on the organisers' GDS; if
+it passes, use it as drawn; redraw it only if it fails.
 
     repo    sscs-ose/sscs-chipathon-2026, commit aa834f5
     path    resources/Integration/Chipathon2025_pads/magic/secondary_ESD.gds
     cell    io_secondary_5p0, 75.65 x 85.35 um = 6457 um2
 
-* **DRC**: 0 violations, 63 rule tables, KLayout sign-off deck.
-* **LVS**: `Congratulations! Netlists match` — against a reference that
-  describes what is **drawn**.
-* **Their published schematic does not match their own GDS.** It declares
-  `XR1 ppolyf_u W=16e-6 L=4e-6`; the drawn resistor is **40 x 10 um** (same
-  0.25 squares, same 87.5 ohm, different geometry), and it uses `m=4` on the
-  diodes where LVS wants four explicit instances. **Worth reporting upstream.**
-* `openroad/scripts/esd_jacket.py` wraps their cell and adds **only**: the shift
-  to origin (0,0), a copy of each port label on datatype 0, and one Metal3
-  landing pad per port with its via stack. Not one polygon of their devices is
-  touched.
-* Pin mapping: their `ASIG5V` is our `PAD`; their `to_gate` is our `CORE`.
-* Area cost: 6457 um2 each against 501 um2 for our own `ESD_CDM`, times 11
-  instances. Our `esd_layout.py` and `XSCHEM_v2/ESD_CDM.sch` are **kept, not
-  deleted** — they are simply not what gets fabricated.
+It passed the split-table DRC, so it was adopted, jacketed by `esd_jacket.py`
+and integrated. Then `MSLOT.1` turned out never to have run (§3), and on the
+run that does run it **all three of their variants carry `MSLOT.1`** — a plate
+of metal wider than the 30 um the rule allows without slotting. Their cell was
+importing a violation into our die, eleven times.
 
-Vendored at `layouts_v2/io_secondary_5p0/` with `README_ORIGEN.txt` beside it.
-**It is not in `layouts/` (v1).** If a v1 flow ever needs it, copy it there.
+**So we drew it ourselves — their circuit, not a redesign.** `ESD_CDM`,
+`scripts/esd_layout.py`, schematic `XSCHEM_v2/ESD_CDM.sch`:
+
+* **8 diodes**, exactly their `m=4` written out as four explicit instances each
+  (KLayout does not expand `m=`, and LVS wants the instances):
+  4 x `diode_nd2ps_06v0` from `VSS` to `PAD`, 4 x `diode_pd2nw_06v0` from `PAD`
+  to `VDD`, all 10 x 10 um — `AREA=100p PJ=40u`.
+* **the series resistor exactly as their schematic declares it**:
+  `ppolyf_u W=16e-6 L=4e-6`, 0.25 squares, **87.5 ohm**, bulk in `VDD` over
+  n-well. Note this is their *schematic*: their own GDS draws 40 x 10 um
+  instead — same squares, same resistance, different geometry. **Their
+  schematic and their GDS do not agree, and that is worth reporting upstream.**
+* Pin mapping is theirs: `ASIG5V` = our `PAD`, `to_gate` = our `CORE`.
+* **63.16 x 27.90 um = 1762 um2** per clamp against their 6457 — about
+  52,000 um2 saved over eleven instances — and no `MSLOT.1`.
+
+Verdict, `layouts_v2/ESD_CDM/lvs/RESUMEN.txt`, 2026-08-30 07:37:
+**KLayout LIMPIO, netgen CASAN.**
+
+Two traps paid for while drawing it:
+
+* `via_generator` called with a `y_range` **exactly** the size of one via draws
+  **nothing**, silently. Give it room.
+* the deletion window in `_fix_res_heads()` ate the well-tap contacts before it
+  was bounded. If the taps vanish, look there.
+
+`io_secondary_5p0` stays vendored at `layouts_v2/io_secondary_5p0/` with its
+`README_ORIGEN.txt`, and `esd_jacket.py` stays in the flow. **They are kept, not
+deleted — they are simply not what gets instantiated.**
 
 ---
 
 ## 5. Where the flow stands, block by block
 
-Measured 2026-08-29.
+Measured 2026-08-31.
 
 | thing | state | evidence |
 |---|---|---|
-| `OPAM_LIN_flat` v1 (`layouts/`) | **built, clean** — 1 k sheet, KLayout LIMPIO, netgen CASAN | `layouts/OPAM_LIN_flat/lvs/RESUMEN.txt`, 05:57 |
-| `OPAM_LIN_flat` v2 (`layouts_v2/`) | **built, clean**, 86.94 x 48.71 um | `layouts_v2/.../lvs/RESUMEN.txt`, 06:41 |
-| `io_secondary_5p0` | **vendored + jacket + LEF** | `lef/io_secondary_5p0.lef`, 10:22 |
-| collateral (`lef/`, `verilog/`) | **regenerated** for every block | 10:22–10:23 |
-| `GRADIENT_NAV2` floorplan | **re-done** | `out_v2_GRADIENT_NAV2/GRADIENT_NAV2.def`, 10:23 |
-| `GRADIENT_NAV2` route / GDS | **STALE — from 2026-08-27.** The rebuild was interrupted right after the floorplan. | `GRADIENT_NAV2_routed.def`, `GRADIENT_NAV2.gds` |
-| `B26_A` integration | **STALE — from 2026-08-28**, i.e. older than the new amplifier and older than the ESD adoption | `out_integration/B26_A.gds` |
-| `B26_A_filled.gds` density | **passes**: 0 violations on the density pass | `out/density_B26_A_FILLED` |
-| `B26_A_filled.gds` sign-off DRC | **57 x `M2.2b`** on the 03:21 file. Cause found and fixed in `fill_density.py` (06:44); the fill has to be re-run and re-checked. | `out/drc_B26_A_FILLED` |
+| `COMP`, `DECODER`, `DECODER_MAX`, `OPAM`, `OPAM_LIN_flat`, `WEIGHT_COMP` | **built, clean** — KLayout LIMPIO, netgen CASAN | `layouts_v2/*/lvs/RESUMEN.txt`, 2026-08-29 18:10 |
+| `ESD_CDM` | **built, clean** | `layouts_v2/ESD_CDM/lvs/RESUMEN.txt`, 2026-08-30 07:37 |
+| `OPAM_SUMA` | **broken, and left broken on purpose** — NO CASAN in both engines. `GRADIENT_NAV2` does not use it. | same file |
+| `GRADIENT_NAV2` | **rebuilt**, 460.90 x 386.99 um, netgen `Circuits match uniquely` | `out_v2_GRADIENT_NAV2/`, 2026-08-29 |
+| `B26_A` integration | **done**, 11 x `ESD_CDM` placed by the pads | `out_integration/B26_A.gds`, 2026-08-30 08:05 |
+| `B26_A_filled.gds` | **built**, archived as `integration/gds/2026-08-30_03` | sha256 `5982dfe4...` |
+| — density | **clean** | `out/density_B26_A_FILLED` |
+| — LVS netgen | **`Circuits match uniquely`**, 1442 devices, 894 nets | `out/lvs_netgen_B26_A.rpt` |
+| — `check_integration.py` | **17 / 17**, 11 of them through their clamp | script output |
+| — `PR_bndry` | **1**, on all four GDS files | `def_to_gds.py::una_sola_frontera()` |
+| — current density | **passes**: 48.00 um of section against 22.10 required | `check_current_density.py` |
+| — sign-off DRC, split tables | 63 tables, 0 violations | `out/drc_B26_A_FILLED` |
+| — sign-off DRC, **`main`/deep** | **11 x `MSLOT.1`**, everything else clean | the run of 2026-08-31 |
 
 ### THE ONE THING TO DO NEXT
 
-The top rebuild is **half-done**. Finish it, in this order, and everything
-downstream follows:
+**Eleven `MSLOT.1` on Metal2, and they are ours.** Not the fill and not the ESD:
+measured with `mslot1_local` they appear identically on `B26_A_filled.gds` and
+on `B26_A.gds`, and they were there in the previous version with the
+organisers' cell too.
+
+They are the **pin escape channels**. The padring's pad pin arrives as a comb of
+1.00 x 2.54 um Metal2 rectangles at x 0..1; `integrate_top.tcl` runs each tooth
+straight out to `ESCAPE_X = 55.72`, and the union of the comb comes out as a
+single polygon:
+
+    metal2 in the flagged band (0..60, 118..167): 2 polygons
+       bbox  55.91 x  44.77   area 2445.7 um2   points=36
+       bbox   0.44 x   0.44   area    0.2 um2   points=4
+
+55.91 x 44.77 um — over 30 um in **both** directions, which is exactly what
+`MSLOT.1` forbids without slotting. Eleven of them, one per analog pad, in bands
+every 100 um: `(0,120.34;55.72,164.66)`, `(0,220.34;55.72,264.66)`, ...
+
+Two ways out:
+
+1. **break up the escape** so no 30 x 30 um square fits inside it — a small
+   change around `set ESCAPE_X [pista [expr {$VDD_OFF + $BUS_W + 4.0}]]` in
+   `integrate_top.tcl`. **This is the one to do.**
+2. slot the region, which is what the rule literally asks for and is more work
+   for the same result.
+
+Then, in this order:
 
 ```bash
 cd /foss/designs/a_zonetic2026/openroad
-make route T=GRADIENT_NAV2 V=v2
-make gds   T=GRADIENT_NAV2 V=v2
-make decap T=GRADIENT_NAV2 V=v2
-make fill  T=GRADIENT_NAV2 V=v2
-make lvs-ref T=GRADIENT_NAV2 V=v2
-
-# then the integration on top of it
 openroad -no_init -exit scripts/integrate_top.tcl
 env -u PYTHONPATH python3 scripts/def_to_gds.py \
     out_integration/B26_A_routed.def out_integration/B26_A.gds
+
+# the verdict run: one main table, deep, single-threaded -- mslot survives here
+DRC_MODE=deep DRC_THR=1 DRC_MP=1 \
+    make drc T=B26_A TOP_OUT=out_integration ARGS=B26_A
+
+# only once that is zero:
 TOP_OUT=out_integration TOP_CELL=B26_A env -u PYTHONPATH python3 scripts/fill_density.py
 make lvs-ref T=B26_A TOP_OUT=out_integration
-
-# and the four checks, which check four DIFFERENT things
-make drc         T=B26_A TOP_OUT=out_integration ARGS=B26_A_FILLED
 make drc-density T=B26_A TOP_OUT=out_integration
-make lvs-klayout T=B26_A TOP_OUT=out_integration ARGS=B26_A_FILLED
 env -u PYTHONPATH /headless/.venvs/zotnetic/bin/python scripts/check_integration.py
+env -u PYTHONPATH /headless/.venvs/zotnetic/bin/python scripts/check_current_density.py
+env -u PYTHONPATH /headless/.venvs/zotnetic/bin/python scripts/archivar_integracion.py
 ```
 
 `make fill` on the 1110 x 1110 die takes about **three hours** and ~1.7 GB of
-RAM. Run it in the background.
+RAM; the `main`/deep DRC on the filled file takes longer still. Run both in the
+background, and **fix the geometry before filling** — filling first only means
+doing the three hours twice.
 
-`openroad/README.md` still carries a section titled *"The schematic is AHEAD of
-the GDS"*. Three of its four items are still true (the top is not rebuilt); the
-fourth, the 1 kohm amplifier, is now built. **Delete that section, and its
-"What that means for the files here" sub-section, the moment the top is rebuilt.**
+### And the thing that is not ours to do
+
+The submission still waits on **the organisers regenerating the padring** with
+today's pin order (`VSS` first, `VDD` last). `openroad/padframe/B26_A.def` is
+still the 27 August file. What used to block them — the two `PR_bndry` shapes —
+is fixed and pushed; there is nothing of B26 in their repository yet.
 
 ---
 
@@ -263,7 +370,7 @@ integrated area:
 | `LVS_VERILOG_FILES` | `$UPRJ_ROOT/FINAL/openroad/verilog/B26_A.v` |
 
 `B26_A` now has a schematic of its own, `XSCHEM/B26_A.sch` — the block plus its
-eleven `io_secondary_5p0` clamps — so its reference comes out of xschem through
+eleven `ESD_CDM` clamps — so its reference comes out of xschem through
 `lvs_reference.py` like every other cell's.
 `scripts/lvs_reference_integration.py` is **superseded**; it is kept only so the
 history reads, and its own docstring says so.
@@ -309,7 +416,10 @@ breaking a cell on purpose and checking that the check fails.
   `capturar*.py`) went up; `/foss/designs/.gitignore` enforces it. On
   2026-08-29 the user asked for the knowledge MDs to go up **so that a fresh
   chat can resume from zero** — that is a deliberate exception for the
-  documentation, not for the PDFs or the generator scripts.
+  documentation, not for the PDFs or the generator scripts. And the user then
+  narrowed it: **the MDs and the generator go to `Juander28/GDS_GENERATOR`, not
+  to the design repository.** That is this repository. The design repository
+  keeps only the design.
 
 ---
 
@@ -369,6 +479,34 @@ cd verify && find FINAL -type l -lname '/*'
 python3 -c "print(open('FINAL/openroad/out_integration/B26_A_filled.gds','rb').read(4).hex())"
 # 00060002 = valid GDSII header
 ```
+
+
+### The other repository — this one
+
+**`git@github.com:Juander28/GDS_GENERATOR.git`**, owned by this machine's key,
+so pushing needs no collaborator status. It holds the **tooling and the
+knowledge**: `zotnetic_layout/`, `flow_scripts/` (a copy of
+`FINAL/openroad/scripts/` plus its `Makefile`) and `docs/`.
+
+It is a **copy**, so it goes stale silently. When a flow script or a generator
+module changes, sync it:
+
+```bash
+cd <scratchpad>
+git clone git@github.com:Juander28/GDS_GENERATOR.git gen
+for b in $(ls gen/flow_scripts); do
+    src=/foss/designs/a_zonetic2026/openroad/scripts/$b
+    [ -f "$src" ] && { cmp -s "gen/flow_scripts/$b" "$src" || echo "DIFF $b"; }
+done
+```
+
+`/bin/cp` on purpose there too — `cp` is aliased to `cp -i` and a plain `cp -f`
+in a loop will sit waiting for an answer nobody types.
+
+**No generated artefacts go here**: no GDS, no `.lyrdb`, no extraction
+databases. They weigh hundreds of megabytes, they are regenerated by the flow,
+and a stale one is exactly how a DRC and an LVS come to pass against the wrong
+circuit. The deliverables live in the design repository.
 
 LFS is not needed: the largest file is `B26_A_filled.gds` at ~42 MB, under
 GitHub's 100 MB limit. `FINAL/.gitattributes` declares `*.gds binary` so that

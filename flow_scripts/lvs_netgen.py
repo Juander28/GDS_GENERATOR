@@ -138,6 +138,22 @@ def as_subckt_calls(ref: Path, work: Path) -> Path:
         elif re.match(r"^[Cc]\S*\s", line) and _CAP_MODEL[0] in line:
             out.append("X" + line.replace(*_CAP_MODEL))
             n += 1
+        elif re.match(r"^[Rr]\S*\s", line) and "ppolyf" in line:
+            #  Y LAS RESISTENCIAS DE POLI DE TRES TERMINALES. netgen no sabe leer
+            #
+            #      RR1_Xx_esd_S4P_1 S4P_I S4P VDD ppolyf_u W=4e-05 L=1e-05
+            #
+            #  como una `R`: toma el tercer nodo por el valor e inventa un
+            #  dispositivo llamado `VDD`. Y no se arregla declarando el modelo en
+            #  el setup, porque el destrozo ya esta hecho al leer. Como llamada a
+            #  subcircuito si la entiende, que ademas es como magic extrae el
+            #  suyo. Sintoma sin esto, en el LVS de `B26_A`:
+            #      ppolyf_u (11)          | (no matching element)
+            #      (no matching element)  | VDD (11)
+            #  Las de `ppolyf_u_1k` no pasan por aqui: `flatten_spice` ya las
+            #  escribe como `X` con `r_width`/`r_length`.
+            out.append("X" + line)
+            n += 1
         else:
             out.append(line)
     if not n:
@@ -277,7 +293,22 @@ does, and it reports `Netlists match` on these very netlists.
     work.mkdir(parents=True, exist_ok=True)
     #  If the circuit carries 2k or 3k poly the local setup is needed: the PDK
     #  one does not declare those devices and without that it will not reduce
-    base = SETUP_POLYRES if (hoja_poly(ref) or "1k") != "ppolyf_u_1k" else SETUP
+    #
+    #  Y TAMBIEN SI LLEVA `ppolyf_u` A SECAS. El setup del PDK solo declara los
+    #  `ppolyf_u_<n>k`, asi que una linea de tres terminales con el modelo pelado
+    #
+    #      RR1_Xx_esd_S4P_1 S4P_I S4P VDD ppolyf_u W=4e-05 L=1e-05
+    #
+    #  la lee mal: toma el tercer nodo por el valor e inventa un dispositivo
+    #  llamado `VDD`. En `B26_A` eso dejaba una net de mas en la referencia --
+    #  893 contra 894 -- y el sintoma es un `(no matching net) | Net: VDD`, que
+    #  no se parece en nada a su causa. Las once resistencias de los clamps de
+    #  ESD son justo de esa forma, y conviven con las 60 de 1k del amplificador,
+    #  asi que mirar solo "la hoja" no basta.
+    lleva_pelada = re.search(r"\bppolyf_u\b(?!_)", ref.read_text()) is not None
+    base = (SETUP_POLYRES
+            if lleva_pelada or (hoja_poly(ref) or "1k") != "ppolyf_u_1k"
+            else SETUP)
     lines = [f"source {base}"]
     for n, path in ((1, layout), (2, ref)):
         for model in _mim_models(path):

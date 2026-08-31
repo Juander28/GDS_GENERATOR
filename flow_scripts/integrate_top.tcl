@@ -23,6 +23,10 @@ file mkdir $OUT
 read_lef lef/techlef_patched.tlef
 read_lef lef/vias.lef
 read_lef lef/$MACRO.lef
+#  El ESD secundario es un macro mas, y va AQUI y no dentro del bloque: la red
+#  tiene que estar junto al pad, porque lo que quede por delante de la sujecion
+#  no lo protege nada. Es la celda de los organizadores tal cual.
+read_lef lef/ESD_CDM.lef
 
 read_verilog verilog/$CELL.v
 link_design $CELL
@@ -89,6 +93,33 @@ place_macro -macro_name x_core -orientation R0 \
             -location [list [expr {$ox - $gx}] [expr {$oy - $gy}]]
 puts [format "  %s at (%.1f, %.1f), %.2f x %.2f um inside %.0f x %.0f" \
           $MACRO $ox $oy $mw $mh $SIDE $SIDE]
+
+# --- los clamps de ESD secundario, uno por pad analogico ---------------------
+#  Sus sitios los calcula `integrate_padframe.py` a partir de la posicion de
+#  cada pad en el DEF del anillo; aqui solo se colocan. Como con el nucleo, se
+#  compensa el ORIGIN del LEF y se lleva la esquina a una fila, que es lo que
+#  mantiene los pines del macro sobre la rejilla de ruteo.
+if {[info exists ESD_PINS]} {
+    set nesd 0
+    foreach s $ESD_PINS {
+        set inst x_esd_$s
+        if {[$blk findInst $inst] eq "NULL"} {
+            puts "  AVISO: $inst no esta en el verilog; me lo salto"
+            continue
+        }
+        lassign $ESD($s) ex ey
+        set em [[$blk findInst $inst] getMaster]
+        lassign [$em getOrigin] exi eyi
+        set egx [expr {$exi / double($dbu)}]
+        set egy [expr {$eyi / double($dbu)}]
+        set exs [onrow [expr {max($ex, $cx0)}] $cx0 $rw]
+        set eys [onrow [expr {max($ey, $cy0)}] $cy0 $rh]
+        place_macro -macro_name $inst -orientation R0 \
+                    -location [list [expr {$exs - $egx}] [expr {$eys - $egy}]]
+        incr nesd
+    }
+    puts "  $nesd clamps de ESD secundario colocados junto a su pad"
+}
 
 # --- the pins ----------------------------------------------------------------
 #  NOT `place_pin`. That snaps to the routing track and to the manufacturing
@@ -446,6 +477,126 @@ foreach {p net off} [list VSS $nVSS $VSS_OFF VDD $nVDD $VDD_OFF] {
                    [expr {$off + $BUS_W - 0.2}] $py1]
     puts [format "  block %s: Metal5 pad %.2f um tall, %d via4 to the bus" \
               $p [expr {$py1 - $py0}] $nv]
+}
+
+# --- alimentacion de los clamps de ESD ---------------------------------------
+#  SIN ESTO LOS ONCE CLAMPS QUEDAN SIN ALIMENTAR, y un ESD secundario sin VDD ni
+#  VSS no sujeta nada: sus diodos no tienen a donde descargar. No lo dice el DRC
+#  -- la geometria esta perfectamente dibujada -- y el ruteo de senal tampoco,
+#  porque VDD y VSS son nets `special` y el router no las toca.
+#
+#  Lo canto el LVS de `B26_A`, y de una forma que hay que saber leer: doce nets
+#  del layout con `diode_pd2nw/cathode` y `ppolyf_u/3` --el catodo del diodo y el
+#  BULK de la resistencia, o sea el pozo-- que no emparejaban con nada. Ese pozo
+#  tendria que estar en VDD; flotando, sale como net propia.
+#
+#  Cada clamp saca VDD y VSS en un pad de METAL3 (se lo pone `esd_jacket.py`),
+#  asi que la conexion se hace en metal3 hasta el anillo que le toca:
+#
+#    los cinco del OESTE  VSS -> metal3 al oeste + via3 al Metal4 de x[2,26]
+#                         VDD -> metal3 al oeste + via3 al Metal4 de x[28,52]
+#    los seis del NORTE   VSS -> metal3 al norte, que ES metal3 en y[1084,1108]
+#                         VDD -> metal3 al norte + pila hasta el Metal5 de y[1058,1082]
+#
+#  Los cruces no cortocircuitan porque los dos anillos van en capas distintas
+#  donde se cruzan: el metal3 de VDD pasa por encima del Metal4 de VSS y por
+#  debajo del Metal5 de VDD sin tocarlos.
+proc pad_m3 {inst term ix iy dbu} {
+    set it [$inst findITerm $term]
+    if {$it eq "NULL" || $it eq ""} { return {} }
+    foreach mp [[$it getMTerm] getMPins] {
+        foreach b [$mp getGeometry] {
+            if {[[$b getTechLayer] getName] ne "Metal3"} { continue }
+            return [list [expr {([$b xMin]+$ix)/double($dbu)}] \
+                         [expr {([$b yMin]+$iy)/double($dbu)}] \
+                         [expr {([$b xMax]+$ix)/double($dbu)}] \
+                         [expr {([$b yMax]+$iy)/double($dbu)}]]
+        }
+    }
+    return {}
+}
+
+if {[info exists ESD_PINS]} {
+    set nlig 0
+    foreach s $ESD_PINS {
+        set inst [$blk findInst x_esd_$s]
+        if {$inst eq "NULL"} { continue }
+        lassign [$inst getLocation] ix iy
+        set norte [expr {[lindex $ESD($s) 1] > $SIDE_UM / 2.0}]
+        foreach {term net off} [list VSS $nVSS $VSS_OFF VDD $nVDD $VDD_OFF] {
+            set b [pad_m3 $inst $term $ix $iy $dbu]
+            if {$b eq {}} {
+                puts "  AVISO: x_esd_$s no expone $term en Metal3"
+                continue
+            }
+            lassign $b px0 py0 px1 py1
+            #  UNA COLUMNA ESTRECHA, no el pad entero. `ESD_CDM` saca sus rieles
+            #  como BARRAS DE METAL3 A TODO LO ANCHO de la celda -- es el
+            #  interfaz que exporta cualquier bloque nuestro -- y tomarlas
+            #  enteras hacia el anillo dibuja dos planchas que comparten toda la
+            #  x: VDD y VSS acaban en la misma net. Con la celda de los
+            #  organizadores no pasaba porque sus pads son cuadrados sueltos.
+            #
+            #  Cada suministro coge ademas una columna DISTINTA, para que sus dos
+            #  tramos no compartan ni la x.
+            set anc [expr {$px1 - $px0}]
+            if {$anc > 3.0} {
+                #  0.8 de ancho y 1.8 entre centros: deja 1.0 um entre las dos
+                #  columnas. Con 1.2 de ancho y 1.4 entre centros quedaban a
+                #  0.20 y salian 7 `M4.2a`, que pide 0.28.
+                set cxx [expr {$px0 + ($term eq "VDD" ? 1.0 : 2.8)}]
+                set px0 [expr {$cxx - 0.4}]
+                set px1 [expr {$cxx + 0.4}]
+            }
+            #  EL TRAMO VA EN METAL4, NO EN METAL3. El pad esta en metal3, pero
+            #  el camino hasta el anillo cruza la celda entera -- el pad de VDD
+            #  vive en el borde derecho y el anillo esta al oeste -- y en metal3
+            #  pasa justo por encima de los pads `ASIG5V` y `to_gate` del propio
+            #  clamp: los une, y con ellos unidos la resistencia en serie queda
+            #  PUENTEADA. Medido: netgen paso de 894 nets a 883, once menos,
+            #  exactamente las once `<PIN>_I` fundidas con su pad.
+            #
+            #  El clamp no tiene ni una forma en Metal4 ni en Metal5 (medido:
+            #  metal3 4 formas, metal4 0, metal5 0), asi que por ahi se cruza sin
+            #  tocar nada. Una via3 sobre el pad sube, y otra baja en el anillo.
+            set cx [expr {($px0 + $px1) / 2.0}]
+            set cy [expr {($py0 + $py1) / 2.0}]
+            via $net Via3_SQ $cx $cy
+            caja $net $L(m4) $px0 $py0 $px1 $py1
+            if {$norte} {
+                set ay [expr {$SIDE_UM - $off - $BUS_W / 2.0}]
+                caja $net $L(m4) $px0 $py0 $px1 $ay
+                if {$term eq "VDD"} {
+                    via $net Via4_SQ $cx $ay          ;# Metal4 -> Metal5 del anillo
+                    caja $net $L(m5) $px0 [expr {$ay - 0.6}] $px1 [expr {$ay + 0.6}]
+                } else {
+                    via $net Via3_SQ $cx $ay          ;# Metal4 -> Metal3 del anillo
+                }
+            } else {
+                set ax [expr {$off + $BUS_W / 2.0}]
+                if {$term eq "VSS"} {
+                    #  VSS VA EN METAL3, NO EN METAL4. Su anillo esta en
+                    #  x[2,26] y el de VDD en x[28,52], y LOS DOS son Metal4:
+                    #  un tramo de VSS en Metal4 desde el clamp hasta su anillo
+                    #  cruza por fuerza el de VDD y los une. Medido: VDD y VSS
+                    #  salian como UNA sola net en el layout, y el sintoma en
+                    #  netgen es `(no matching net) | Net: VDD` con la net de
+                    #  VSS cargando ademas los 643 `pfet/4`.
+                    #
+                    #  En Metal3 el cruce es inocuo, y aqui se puede porque el
+                    #  pad de VSS esta en el borde OESTE del clamp y el tramo se
+                    #  va hacia afuera: no pasa por encima de la celda, que es lo
+                    #  que puentearia su resistencia en serie.
+                    caja $net $L(m3) $ax $py0 $px1 $py1
+                    via $net Via3_SQ $ax $cy
+                } else {
+                    caja $net $L(m4) $ax $py0 $px1 $py1
+                }
+            }
+            incr nlig
+        }
+    }
+    puts "  $nlig conexiones de alimentacion a los clamps de ESD"
 }
 
 #  --- an escape for each signal pin -------------------------------------------

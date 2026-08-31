@@ -968,6 +968,16 @@ Two things worth keeping in mind when using this:
 
 ## The schematic is AHEAD of the GDS. Read this before running LVS.
 
+> **RESOLVED on 2026-08-29 — the gap is closed.** The top was rebuilt:
+> `GRADIENT_NAV2` at 460.90 x 386.99 um, netgen `Circuits match uniquely`, and
+> `B26_A` on top of it. The four items below are all **in the GDS** now, and the
+> "do not regenerate" warnings at the end of this section **no longer apply** —
+> everything was regenerated together.
+>
+> The section is kept because it is the record of *what* those four changes were
+> and what each one bought, which nothing else in this tree writes down. Read it
+> as history, not as an instruction.
+
 As of 2026-08-28 the design in `XSCHEM/` carries four changes that are **not in
 the GDS**, because rebuilding the top was deliberately deferred until the
 organisers send a padring generated from the reordered `info.yaml`. Rebuilding

@@ -31,8 +31,23 @@ import build_collateral as bc
 
 ROOT = Path(__file__).resolve().parent.parent
 BLOCK = "GRADIENT_NAV2"
-GDS = ROOT / "out_v2_GRADIENT_NAV2" / f"{BLOCK}_filled.gds"
-DEF = ROOT / "out_v2_GRADIENT_NAV2" / f"{BLOCK}_routed.def"
+_OUT = ROOT / "out_v2_GRADIENT_NAV2"
+
+#: DE DONDE SALE LA GEOMETRIA, en orden de preferencia.
+#:
+#: El relleno de densidad ya NO se hace dos veces. Se hace UNA, al final, sobre
+#: el area integrada; el bloque llega hasta el decap y nada mas. Asi que aqui
+#: hay que coger el fichero mas avanzado que EXISTA, y no `_filled.gds` a secas:
+#: cogiendolo a secas se lee el relleno de la tanda ANTERIOR, y con el su
+#: contorno. Medido: el bloque pasaba a 460.90 x 386.99 um y este LEF seguia
+#: diciendo `SIZE 418.240 BY 442.190`, la de hace dos dias, asi que
+#: `integrate_top.tcl` colocaba una caja del tamano equivocado y `MPL-0041`
+#: cantaba un solape con un clamp que en realidad no existia.
+GDS = next((g for g in (_OUT / f"{BLOCK}_filled.gds",
+                        _OUT / f"{BLOCK}_decap.gds",
+                        _OUT / f"{BLOCK}.gds") if g.exists()),
+           _OUT / f"{BLOCK}_filled.gds")
+DEF = _OUT / f"{BLOCK}_routed.def"
 NET = ROOT.parent / "XSCHEM/simulation" / f"{BLOCK}.sch" / f"{BLOCK}.spice"
 OUT = ROOT / "lef" / f"{BLOCK}.lef"
 #: How far the obstructions are pulled back from a pin, so the router has

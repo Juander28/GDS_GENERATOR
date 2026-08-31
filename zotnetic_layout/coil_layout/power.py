@@ -83,9 +83,22 @@ def _caja_con_pista(x: float, y: float, lado: float) -> kdb.DBox:
     El metal2 y la via se quedan donde estan -- siguen dentro -- y lo que crece
     es la chapa sobre la que aterriza el router, que es justo lo que le faltaba.
     """
+    #  Y EN X TAMBIEN. Estirar solo en y garantiza que cruce una pista
+    #  HORIZONTAL, y el router necesita las dos: `DRT-0073 No access point for
+    #  x1_x1/INP (OPAM_LIN_flat)` con la plataforma centrada en x=9.29, cuando
+    #  la pista mas cercana esta en 9.24. La x se lleva a pista antes de elegir
+    #  el punto (`_on_track`), pero solo entre los huecos que ya estan sobre
+    #  ella: cuando no hay ninguno se cae a un punto cualquiera, y ahi la
+    #  plataforma se queda sin columna por la que bajar.
+    #
+    #  Cuesta como mucho medio paso de pista de metal3 sobre una capa que en el
+    #  canal esta practicamente vacia, y el hueco se comprueba sobre esta misma
+    #  caja (`_clear(chapa, ...)`), asi que crecer aqui no se salta ninguna
+    #  comprobacion.
+    xt = _on_track(x)
     yt = _on_track(y)
-    return kdb.DBox(x - lado / 2, min(y, yt) - lado / 2,
-                    x + lado / 2, max(y, yt) + lado / 2)
+    return kdb.DBox(min(x, xt) - lado / 2, min(y, yt) - lado / 2,
+                    max(x, xt) + lado / 2, max(y, yt) + lado / 2)
 
 
 def _clear(box: kdb.DBox, region: kdb.Region, gap: float = _M2_SPACING) -> bool:
@@ -109,6 +122,15 @@ def add_power_access(lay) -> None:
     L = gf180.layer
 
     m2 = _region(top, L["metal2"])
+    #  EL METAL1 DEL RIEL, que es lo que decide donde puede caer una bajada.
+    #  `top.dxmin/dxmax` es el bbox de la CELDA, y ese lo estiran el nwell, los
+    #  implantes y la propia barra de metal3 -- en WEIGHT_COMP llega a x=-3.945
+    #  mientras el riel de metal1 empieza en x=-1.0. Recorriendo el bbox salian
+    #  bajadas con su via1 en el aire: `V1.3a` (metal1 overlap of via1 is 0 um)
+    #  x2, en x=-3.145 y x=-1.145. Y ninguna otra comprobacion lo veia, porque
+    #  la unica que habia era que el metal2 estuviese libre -- y ahi fuera lo
+    #  esta, precisamente porque no hay nada.
+    m1 = _region(top, L["metal1"])
     x0, x1 = top.dxmin, top.dxmax
 
     for y in (lay.vgnd_y, lay.vpwr_y):          # ya son el CENTRO del riel
@@ -127,7 +149,10 @@ def add_power_access(lay) -> None:
             # esa net contra la alimentacion — y fusionados ni el chequeo de
             # espaciado ni el DRC lo ven: solo lo canto el LVS de WEIGHT_COMP,
             # cuyo riel VGND va por DENTRO de la celda, entre las dos filas N.
-            if _clear(pad, m2) and _pad_fits(pad, m2):
+            #  Y el pad ENTERO sobre el metal1 del riel, no solo dentro de la
+            #  banda: la via1 no tiene de que agarrarse fuera de el.
+            sobre_m1 = (kdb.Region(pad.to_itype(1e-3)) - m1).is_empty()
+            if sobre_m1 and _clear(pad, m2) and _pad_fits(pad, m2):
                 _bar(top, L["metal2"], pad.left, pad.right, pad.bottom, pad.top)
                 for via in ("via1", "via2"):
                     flat_add(top, gf180.via_generator(
@@ -221,7 +246,12 @@ def add_gate_to_rail(lay, top, L, gf180) -> None:
         #  medias no hay nada -- y se vuelve a subir pasada.
         cruces = sorted(yr for yr in (lay.vgnd_y, lay.vpwr_y)
                         if abs(yr - y_riel) > 1e-6 and lo - _PAD < yr < hi + _PAD)
-        salto = RAIL_WIDTH / 2 + _LAND_CLEAR
+        #  `+ _PAD/2` porque el metal3 NO acaba en `a`: acaba en el pad de la
+        #  via2, que va centrado en `a` y mide `_PAD`. Sin ese medio pad el hueco
+        #  real hasta la barra del riel sale `salto - _PAD/2 - RAIL_WIDTH/2` =
+        #  0.27 um, y `M3.2a` pide 0.28. Dos violaciones por un hundredth, una
+        #  por cada extremo del cruce.
+        salto = RAIL_WIDTH / 2 + _LAND_CLEAR + _PAD / 2
 
         elegido = None
         for xc in cand:
@@ -240,8 +270,12 @@ def add_gate_to_rail(lay, top, L, gf180) -> None:
                     and _clear(jog, fuera, _LAND_CLEAR)):
                 continue
             #  Y metal2 libre en la ventana de cada cruce, que es por donde pasa.
-            if all(_clear(kdb.DBox(xc - _PAD / 2, yr - salto,
-                                   xc + _PAD / 2, yr + salto), m2, _M2_SPACING)
+            #  La ventana que se comprueba es la que se DIBUJA, `_PAD/2` mas
+            #  larga por cada extremo; comprobar la corta y dibujar la larga es
+            #  como se cuela un cortocircuito por 0.19 um.
+            if all(_clear(kdb.DBox(xc - _PAD / 2, yr - salto - _PAD / 2,
+                                   xc + _PAD / 2, yr + salto + _PAD / 2),
+                          m2, _M2_SPACING)
                    for yr in cruces):
                 elegido = xc
                 break
@@ -271,10 +305,16 @@ def add_gate_to_rail(lay, top, L, gf180) -> None:
         cortes = []
         for yr in cruces:
             cortes.append((yr - salto, yr + salto))
+        #  El metal2 del cruce va de `a - _PAD/2` a `b + _PAD/2`, no de `a` a `b`.
+        #  Las dos via2 se centran EN `a` y en `b` (ver el bucle de `cortes` mas
+        #  abajo), asi que con el tramo justo de a a b cada via se queda con la
+        #  mitad fuera del metal2: `V2.3b` (metal2 overlap of via2) x2, con 0.13
+        #  de 0.26 cubiertos. El metal3 no lo sufria porque ahi el `_bar` de cada
+        #  via ya dibuja su pad de `_PAD` centrado en la via.
         tramos, y0 = [], lo - _PAD / 2
         for a, b in cortes:
             tramos.append(("metal3", y0, a))
-            tramos.append(("metal2", a, b))
+            tramos.append(("metal2", a - _PAD / 2, b + _PAD / 2))
             y0 = b
         tramos.append(("metal3", y0, hi + _PAD / 2))
         for capa, ya, yb in tramos:

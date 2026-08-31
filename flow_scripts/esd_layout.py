@@ -59,22 +59,47 @@ GRID = 0.005
 RAIL_W = 0.9              # same as coil_layout.placement.RAIL_WIDTH
 TRACK_PITCH, TRACK_OFF = 0.56, 0.28
 
-#: Diode geometry. `wa` runs along x and `la` along y, so this is 10 wide by
-#: 5 tall and pj = 2*(10+5) = 30 um.
-D_WA, D_LA = 10.0, 5.0
+#: Diode geometry. `wa` runs along x and `la` along y.
+#:
+#: 10 x 10 y CUATRO POR SENTIDO, que es el clamp de los organizadores medido
+#: sobre su GDS (`r_w=10u r_l=10u m=4`). El que habia antes -- 10 x 5 y dos por
+#: sentido -- da 100 um2 de diodo por sentido contra sus 400: cuatro veces menos
+#: corriente de descarga. No era su celda mejor dibujada, era un clamp mas flojo.
+D_WA, D_LA = 10.0, 10.0
+#: Cuantos diodos por sentido.
+D_N = 4
 #: Column pitch of the two diodes in a row. The two pd2nw bring an n-well each
 #: and NW.2 wants 0.6 um between wells at the same potential; at a pitch of 12
 #: the gap came to 0.44. 13 leaves 1.44.
 D_PITCH_X = 13.0
 
-#: Resistor: five 1 x 2 um bodies of high-sheet poly, in parallel.
-#: `ppolyf_u_high_Rs_res` and not `ppolyf_res(ppolyf_u)`: measured on the PCells
-#: alone, the first has no violation of its own and the second brings SB.4,
-#: PP.2 and PRES.7 with it.
-R_W, R_L, R_N = 1.0, 2.0, 5
-#: Row pitch. The PCell's salicide block runs from -0.28 to w+0.28, so at a
-#: pitch of 2.6 two neighbouring blocks stay 1.04 um apart.
-R_PITCH_Y = 2.6
+#: Resistencia: UN cuerpo de `ppolyf_u` de W=16 x L=4 um, que es lo que dice el
+#: esquematico de los organizadores al pie de la letra:
+#:
+#:     C {symbols/ppolyf_u.sym} ... {name=R1 W=16e-6 L=4e-6 model=ppolyf_u m=1}
+#:
+#: 0.25 cuadros a 350 ohm/sq = 87.5 ohm. Ojo: su GDS la dibuja de 40 x 10, los
+#: mismos cuadros y el mismo valor con otra geometria; aqui manda el ESQUEMATICO,
+#: que es lo que se pidio.
+#:
+#: `ppolyf_res(res_type="ppolyf_u")` y no `ppolyf_u_high_Rs_res`: aquel es el
+#: dispositivo de 1k y este es el pelado, que es el suyo. A cambio, el PCell no
+#: esta limpio -- 64 `SB.4`, 2 `PRES.7`, 2 `PP.2` -- y hay que operarlo; ver
+#: `_fix_res_heads`.
+R_W, R_L = 16.0, 4.0
+#: Cuanto se alargan las cabezas de poli hacia afuera y donde van sus contactos.
+#:
+#: El PCell deja el bloqueo de silicida pegado al cuerpo (x = 0 y x = L) y los
+#: contactos de cabeza a 0.11 um de el, cuando `PRES.7` pide 0.22 y `SB.4` 0.15.
+#: Y no basta con retirar el SAB: las cabezas miden 0.44 um, donde no caben un
+#: contacto de 0.22, su encierro y la holgura. Asi que se alargan y el contacto
+#: se va con ellas, que es la misma operacion que `_fix_strip_contacts` hace en
+#: los diodos.
+HEAD_GROW = 0.40          # cuanto crece cada cabeza hacia afuera
+HEAD_CO_IN = 0.18         # del borde exterior de la cabeza al contacto
+#: Pozo n bajo la resistencia (su bulk va a VDD) y la toma n+ que lo ata.
+NW_MARGEN = 1.20
+TAP_SEP, TAP_W, TAP_HUECO = 0.60, 0.60, 2.60
 #: Where the high-Rs PCell puts its contacts, MEASURED on it and not assumed:
 #: the substrate tap at -1.66..-1.44, the left poly head at -0.57..-0.35 and the
 #: right one at l+0.35..l+0.57. The plain ppolyf_res puts them somewhere else
@@ -183,11 +208,16 @@ def label(c, L, name, x, y):
 MARGIN = 1.0
 DX = 1.0                  # left edge of the first diode's main comp
 Y_ND = 1.7                # the nd2ps row (clamps below VSS)
-Y_PD = 8.6                # the pd2nw row (clamps above VDD)
-Y_LINK = 7.5              # the horizontal PAD bar between the two rows
-Y_VDD = 15.0              # bottom of the VDD rail
-RX = 27.5                 # left edge of the resistor bodies
-RY = 1.7
+#: La fila de pd2nw va por encima de la de nd2ps con sitio para los DOS pozos:
+#: el `LVPWELL` del nd2ps sube hasta `Y_ND + D_LA + LVPWELL_ENC` y el `nwell` del
+#: pd2nw baja hasta `Y_PD - NWELL_PCOMP`. Con diodos de 10 de alto en vez de 5,
+#: los 8.6 de antes metian el pozo de arriba DENTRO del de abajo.
+Y_PD = 15.0
+Y_LINK = 13.3             # the horizontal PAD bar between the two rows
+Y_VDD = 27.0              # bottom of the VDD rail
+#: La resistencia, a la derecha de los cuatro diodos.
+RX = 55.0
+RY = 5.5
 
 
 def build():
@@ -205,7 +235,7 @@ def build():
     pad_m1, strips = [], []
     for kind, y, rail_y, tag in (("nd2ps", Y_ND, RAIL_W, "VSS"),
                                  ("pd2nw", Y_PD, Y_VDD, "VDD")):
-        for k in range(2):
+        for k in range(D_N):
             x = DX + k * D_PITCH_X
             d = c.add_ref(getattr(gf180, f"diode_{kind}")(
                 la=D_LA, wa=D_WA, volt="5/6V"))
@@ -241,31 +271,55 @@ def build():
     #  The bar that ties the four main comps together. It runs in the gap
     #  between the rows, clear of the n+ implant below (which stops at
     #  Y_ND + D_LA + 0.16) and of the n-well above (which starts at Y_PD - 0.43).
-    x_pad_hi = DX + D_PITCH_X + D_WA - 0.04
+    x_pad_hi = DX + (D_N - 1) * D_PITCH_X + D_WA - 0.04
     box(c, L["metal1"], DX + 0.04, Y_LINK - 0.5, x_pad_hi, Y_LINK + 0.5)
-    for k in range(2):
+    for k in range(D_N):
         x = DX + k * D_PITCH_X
         box(c, L["metal1"], x + 0.5, Y_ND + D_LA - 0.04, x + 2.0, Y_LINK + 0.5)
         box(c, L["metal1"], x + 0.5, Y_LINK - 0.5, x + 2.0, Y_PD + 0.04)
 
-    #  --- the resistor: five fingers in parallel ----------------------------
-    #  The PCell hangs a SUBSTRATE TAP off the left of each body, at
-    #  x -1.52..-1.16, and its contact sits between the tap and the left head.
-    #  Covering both with one piece of metal is what once tied a resistor end to
-    #  ground with a clean DRC, so the two get separate covers.
-    r_top = RY + (R_N - 1) * R_PITCH_Y + R_W
-    for i in range(R_N):
-        y = RY + i * R_PITCH_Y
-        r = c.add_ref(gf180.ppolyf_u_high_Rs_res(l_res=R_L, w_res=R_W, volt="5V"))
-        r.dmove((RX, y))
-        box(c, L["metal1"], RX + HEAD_L0, y + 0.05, RX + HEAD_L1, y + R_W - 0.05)
-        box(c, L["metal1"], RX + R_L + HEAD_R0, y + 0.05,
-            RX + R_L + HEAD_R1, y + R_W - 0.05)
-        box(c, L["metal1"], RX + TAP_X0, y + 0.05, RX + TAP_X1, y + R_W - 0.05)
-    #  the three vertical bars: PAD, CORE, and the taps down to VSS
-    box(c, L["metal1"], RX + HEAD_L0, RY, RX + HEAD_L1, r_top)
-    box(c, L["metal1"], RX + R_L + HEAD_R0, RY, RX + R_L + HEAD_R1, r_top)
-    box(c, L["metal1"], RX + TAP_X0, RAIL_W - 0.1, RX + TAP_X1, r_top)
+    #  --- la resistencia: UN cuerpo de ppolyf_u de W=16 x L=4 ---------------
+    #  El PCell la dibuja con el cuerpo a lo largo de Y (`w_res`) y de `l_res` de
+    #  ancho en X, con una cabeza de poli de 0.44 um a cada lado y una toma de
+    #  SUSTRATO colgando a la izquierda.
+    #
+    #  Esa toma sobra: el bulk de esta resistencia va a VDD (el pin `B` de su
+    #  simbolo), asi que el cuerpo va sobre POZO N y la toma tiene que ser n+
+    #  DENTRO del pozo. La del PCell se borra en `_fix_res_heads` y aqui se
+    #  dibuja la nuestra.
+    r = c.add_ref(gf180.ppolyf_res(l_res=R_L, w_res=R_W, res_type="ppolyf_u"))
+    r.dmove((RX, RY))
+    r_top = RY + R_W
+
+    #  El pozo n bajo todo el cuerpo, con holgura, y el dualgate que lo cubre.
+    box(c, L["nwell"], RX - NW_MARGEN, RY - NW_MARGEN,
+        RX + R_L + NW_MARGEN + TAP_HUECO, r_top + NW_MARGEN)
+
+    #  Las cabezas alargadas y sus contactos: los dibuja `_fix_res_heads` sobre
+    #  el GDS, porque el poli y los contactos son del PCell. Aqui solo va el
+    #  metal1 que los tapa, que si es nuestro.
+    hl0 = RX - 0.44 - HEAD_GROW
+    hr1 = RX + R_L + 0.44 + HEAD_GROW
+    box(c, L["metal1"], hl0 + 0.02, RY + 0.05, RX - 0.06, r_top - 0.05)
+    box(c, L["metal1"], RX + R_L + 0.06, RY + 0.05, hr1 - 0.02, r_top - 0.05)
+
+    #  La toma n+ del pozo, a la derecha, y su metal1 hasta el riel de VDD.
+    tx0 = RX + R_L + 0.44 + HEAD_GROW + TAP_SEP
+    tx1 = tx0 + TAP_W
+    box(c, L["comp"], tx0, RY, tx1, r_top)
+    box(c, L["nplus"], tx0 - IMPLANT_ENC, RY - IMPLANT_ENC,
+        tx1 + IMPLANT_ENC, r_top + IMPLANT_ENC)
+    #  Los contactos, como CAJAS y no por `via_generator`. Esa llamada, con un
+    #  `y_range` del tamano justo de la via, no dibujaba nada -- ni un aviso -- y
+    #  la toma se quedaba sin contactos: el pozo sin atar y la resistencia
+    #  extraida con el bulk en una net suelta. Las cabezas ya se dibujan asi.
+    cxc = (tx0 + tx1) / 2
+    yc = RY + 0.4
+    while yc <= r_top - 0.4:
+        box(c, L["contact"], cxc - CONTACT / 2, yc - CONTACT / 2,
+            cxc + CONTACT / 2, yc + CONTACT / 2)
+        yc += 0.6
+    box(c, L["metal1"], tx0 - 0.02, RY, tx1 + 0.02, Y_VDD + RAIL_W)
 
     #  --- PAD, from the diodes to the resistor ------------------------------
     #  Over the tap bar, so it goes in metal2 with a via at each end. Metal1
@@ -284,7 +338,12 @@ def build():
             via_spacing=(VIA, VIA)))
 
     #  --- rails, their metal3 bars and the drops ----------------------------
-    W = RX + R_L + HEAD_R1 + MARGIN
+    #  El ancho tiene que cubrir TAMBIEN la toma n+ del pozo y su metal1: si el
+    #  riel de VDD acaba antes, el pozo se queda sin atar y la resistencia se
+    #  extrae con el bulk en una net suelta (`R$9 PAD CORE $4 87.5 ppolyf_u`),
+    #  que es un fallo de LVS y no de DRC.
+    W = max(RX + R_L + HEAD_R1 + MARGIN,
+            RX + R_L + 0.44 + HEAD_GROW + TAP_SEP + TAP_W + MARGIN)
     H = Y_VDD + RAIL_W
     for y0, name in ((0.0, "VSS"), (Y_VDD, "VDD")):
         box(c, L["metal1"], 0.0, y0, W, y0 + RAIL_W)
@@ -309,11 +368,98 @@ def build():
     path = OUT / f"{CELL}_flat_gf180.gds"
     c.write_gds(path)
     _fix_strip_contacts(path, strips)
+    _fix_res_heads(path)
     b = c.dbbox()
     print(f"  {CELL}: {b.width():.2f} x {b.height():.2f} um -> {path}")
     return path
 
 
+
+
+def _fix_res_heads(path):
+    """Alarga las cabezas de poli de la resistencia y saca sus contactos.
+
+    El PCell deja el bloqueo de silicida pegado al cuerpo -- de x=0 a x=L -- y
+    los contactos de cabeza a 0.11 um de el. `SB.4` pide 0.15 y `PRES.7`, que es
+    la que manda sobre una resistencia de poli, pide 0.22. Medido a pelo sobre el
+    PCell a 16 x 4: 64 `SB.4` y 2 `PRES.7`.
+
+    Y no vale con retirar el SAB: las cabezas miden 0.44 um, donde no caben un
+    contacto de 0.22, su encierro de poli y la holgura. Asi que se alargan
+    `HEAD_GROW` hacia afuera y el contacto se va con ellas, que es exactamente lo
+    que `_fix_strip_contacts` hace con las tomas de los diodos.
+
+    Se borra ademas la TOMA DE SUSTRATO que el PCell cuelga a la izquierda: el
+    bulk de esta resistencia va a VDD, no a sustrato, asi que su sitio lo ocupa
+    la toma n+ que `build` dibuja dentro del pozo.
+    """
+    ly = kdb.Layout()
+    ly.read(str(path))
+    top = ly.top_cell()
+    top.flatten(-1, True)
+    dbu = ly.dbu
+    co, poly = ly.layer(33, 0), ly.layer(30, 0)
+
+    x_body0, x_body1 = RX, RX + R_L
+    hl0 = x_body0 - 0.44 - HEAD_GROW
+    hr1 = x_body1 + 0.44 + HEAD_GROW
+
+    #  1) fuera los contactos de cabeza y los de la toma de sustrato del PCell
+    fuera = 0
+    for s in list(top.each_shape(co)):
+        b = s.box if s.is_box() else s.polygon.bbox()
+        xc = (b.left + b.right) / 2 * dbu
+        yc = (b.bottom + b.top) / 2 * dbu
+        #  SOLO los de la resistencia. Sin acotar tambien en x, el filtro se
+        #  llevaba por delante los de los diodos -- 2390 contactos en vez de los
+        #  del PCell -- porque la banda de y de la resistencia se solapa con las
+        #  dos filas de diodos.
+        #  Ventanas AJUSTADAS a lo que hay que quitar: a la izquierda la cabeza
+        #  del PCell y su toma de sustrato; a la derecha SOLO la cabeza. Con la
+        #  ventana derecha a 3 um se borraban tambien los contactos de la toma
+        #  n+ del pozo, que dibuja `build` y que son justo los que atan el bulk
+        #  a VDD -- y sin ellos la resistencia se extrae con el bulk suelto.
+        if RY - 0.5 <= yc <= RY + R_W + 0.5 and (
+                x_body0 - 2.0 <= xc < x_body0
+                or x_body1 < xc <= x_body1 + 0.6):
+            s.delete(); fuera += 1
+
+    #  2) fuera tambien el COMP y el PPLUS de esa toma. Borrar solo sus
+    #     contactos dejaba el comp p+ ahi al lado, y con el cinco violaciones:
+    #     `PRES.3` (resistencia de poli a COMP, 0.6 y habia 0.32), `DF.4c_LV` y
+    #     `DF.17_LV` (pozo contra ese PCOMP) y una `PP.2`.
+    comp, pplus = ly.layer(22, 0), ly.layer(31, 0)
+    for capa in (comp, pplus):
+        for s in list(top.each_shape(capa)):
+            b = s.box if s.is_box() else s.polygon.bbox()
+            xc = (b.left + b.right) / 2 * dbu
+            yc = (b.bottom + b.top) / 2 * dbu
+            if RY - 1.0 <= yc <= RY + R_W + 1.0 and x_body0 - 3.0 <= xc <= x_body0 - 0.9:
+                s.delete(); fuera += 1
+
+    #  3) el poli de las cabezas, alargado
+    for x0, x1 in ((hl0, x_body0), (x_body1, hr1)):
+        top.shapes(poly).insert(
+            kdb.DBox(snap(x0), snap(RY), snap(x1), snap(RY + R_W)))
+
+    #  4) y el PPLUS que lo cubre todo. `PRES.5` pide 0.3 um de implante por
+    #     fuera de la resistencia, y el del PCell estaba dimensionado para las
+    #     cabezas cortas.
+    top.shapes(pplus).insert(kdb.DBox(
+        snap(hl0 - 0.30), snap(RY - 0.30), snap(hr1 + 0.30), snap(RY + R_W + 0.30)))
+
+    #  5) y los contactos nuevos, a `HEAD_CO_IN` del borde exterior
+    puestos = 0
+    for cx in (hl0 + HEAD_CO_IN + CONTACT / 2, hr1 - HEAD_CO_IN - CONTACT / 2):
+        y = RY + 0.4
+        while y <= RY + R_W - 0.4:
+            top.shapes(co).insert(kdb.DBox(
+                snap(cx - CONTACT / 2), snap(y - CONTACT / 2),
+                snap(cx + CONTACT / 2), snap(y + CONTACT / 2)))
+            puestos += 1
+            y += 0.6
+    ly.write(str(path))
+    print(f"  resistencia: {fuera} contactos del PCell fuera, {puestos} puestos")
 
 
 def _fix_strip_contacts(path, strips):
@@ -375,18 +521,23 @@ LVS_TEMPLATE = """* ESD_CDM: the secondary (CDM) ESD network.
 
 
 def write_lvs(path=None):
+    #  CUATRO por sentido, cada uno como una instancia. El `m=4` del esquematico
+    #  de los organizadores NO lo expande KLayout, asi que la referencia tiene
+    #  que traerlos escritos uno a uno o el LVS no empareja.
+    a, pj = D_WA * D_LA, 2 * (D_WA + D_LA)
     dio = "\n".join(
-        [f"D{i} VSS PAD diode_nd2ps_06v0 AREA={D_WA * D_LA:.0f}p PJ={2 * (D_WA + D_LA):.0f}u"
-         for i in (1, 2)] +
-        [f"D{i} PAD VDD diode_pd2nw_06v0 AREA={D_WA * D_LA:.0f}p PJ={2 * (D_WA + D_LA):.0f}u"
-         for i in (3, 4)])
+        [f"D{i} VSS PAD diode_nd2ps_06v0 AREA={a:.0f}p PJ={pj:.0f}u"
+         for i in range(1, D_N + 1)] +
+        [f"D{i} PAD VDD diode_pd2nw_06v0 AREA={a:.0f}p PJ={pj:.0f}u"
+         for i in range(D_N + 1, 2 * D_N + 1)])
     #  1000 ohm/square is the sheet the KLayout deck uses for ppolyf_u_1k, and
     #  netgen is given the same number through gf180mcuD_setup_polyres.tcl.
     #  It is the implant this shuttle runs; the GEOMETRY is the same for 1k, 2k
     #  and 3k, so nothing above this line changes with it.
-    res = "\n".join(
-        f"R{i} CORE PAD VSS ppolyf_u_1k W={R_W}e-06 L={R_L}e-06 R={R_L / R_W * 1000:.0f}"
-        for i in range(1, R_N + 1))
+    #  Una sola, `ppolyf_u` pelado y con el BULK EN VDD: es el pin `B` de su
+    #  simbolo, y por eso el cuerpo va sobre pozo n. 350 ohm/sq x 0.25 cuadros.
+    res = (f"R1 CORE PAD VDD ppolyf_u W={R_W}e-06 L={R_L}e-06 "
+           f"R={R_L / R_W * 350:.1f}")
     p = path or (OUT / f"{CELL}_lvs.spice")
     p.write_text(LVS_TEMPLATE.format(diodes=dio, resistors=res))
     print(f"  LVS reference -> {p}")

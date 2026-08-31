@@ -38,6 +38,48 @@ MACRO = "GRADIENT_NAV2"
 CELL = "B26_A"
 
 # --------------------------------------------------------------------------- #
+#  EL ESD SECUNDARIO VIVE AQUI, no dentro del bloque. La red -- resistencia en
+#  serie mas dos diodos -- tiene que estar JUNTO AL PAD, que es de donde viene el
+#  evento: metida dentro del bloque, la pista del pad hasta el bloque queda por
+#  delante de la sujecion y no la protege nada.
+#
+#  Es la celda de los organizadores, adoptada tal cual (ver
+#  layouts_v2/io_secondary_5p0/README_ORIGEN.txt). Su `ASIG5V` mira al pad y su
+#  `to_gate` al bloque, asi que la senal pasa POR la celda: el nucleo se conecta
+#  a `<PIN>_I`, no al pin del die. Ese es tambien el nombre que usa
+#  XSCHEM/B26_A.sch, y las dos cosas tienen que coincidir o el LVS no cuadra.
+# --------------------------------------------------------------------------- #
+#: La celda que se fabrica. Paso de ser la de los organizadores a la nuestra:
+#: mismo circuito exacto -- 4+4 diodos de 10x10 y `ppolyf_u` W=16 L=4 con el bulk
+#: en VDD, tal cual su esquematico -- pero 1.762 um2 en vez de 6.457, y sin la
+#: `MSLOT.1` que arrastran las tres variantes suyas. Ver `esd_layout.py`.
+ESD_CELL = "ESD_CDM"
+ESD_W, ESD_H = 63.16, 27.90
+
+#: Sufijo del lado del nucleo. Lo fija el esquematico, no este fichero.
+ESD_SUF = "_I"
+
+#: Donde puede empezar un clamp, contando desde el borde del die.
+#:
+#: NO basta con librar los anillos (`VDD_OFF + BUS_W` = 28 + 24 = 52). Por
+#: delante de ellos corre el CANAL DE ESCAPE de los pines: `integrate_top.tcl`
+#: le da a cada senal una tirada recta de metal2 desde su pad hasta
+#: `ESCAPE_X = pista(VDD_OFF + BUS_W + 4)` = 55.72, y otro tanto por el norte
+#: hasta `ESCAPE_Y` = 1054.20.
+#:
+#: Puestos en x = 54 los clamps caian DENTRO de ese canal, y el resultado no era
+#: un DRC sino un cortocircuito: la placa de metal2 del escape se sienta encima
+#: del clamp y toca su interior, puenteando la resistencia en serie. Las once
+#: nets `<PIN>_I` se fundian con su pad -- 882 nets en el layout contra 894 en el
+#: esquematico -- y el ESD quedaba anulado sin que el DRC dijese nada.
+#:
+#: 58 y 60 dejan 2.3 y 5.8 um de aire sobre el final del canal.
+BUS_EDGE = 58.0
+
+#: Aire entre el borde del die y el clamp por el lado del norte.
+ESD_MARGEN = 60.0
+
+# --------------------------------------------------------------------------- #
 #  HOW THE DIGITAL PADS ARE PROGRAMMED. This table is the whole configuration:
 #  one line per control terminal, and nothing about it is repeated anywhere
 #  else. Changing the drive strength or the slew for the next revision is one
@@ -131,11 +173,44 @@ def read_terminals(path: Path):
     return out
 
 
+def sitio_esd(pins, con_esd):
+    """Donde va el clamp de cada pin: pegado a su pad, dentro de los anillos.
+
+    Los once pads analogicos estan en el borde OESTE (cinco) y en el NORTE
+    (seis), a 100 um entre si; la celda mide 75.65 x 85.35, asi que alineandola
+    con su pad no se tocan entre ellas. Se pega a `BUS_EDGE`, que es donde acaba
+    el anillo de VDD, para dejar la pista del pad al clamp lo mas corta posible:
+    lo que hay por delante de la sujecion no esta protegido.
+    """
+    caja = {n: b[0] for n, _d, _u, b in pins if b}
+    out, ocupado = {}, []
+    for name in con_esd:
+        if name not in caja:
+            continue
+        _l, x0, y0, x1, y1 = caja[name]
+        cx, cy = (x0 + x1) / 2 / DBU, (y0 + y1) / 2 / DBU
+        if cx < AREA / DBU / 2 and (x0 + x1) / 2 / DBU < BUS_EDGE:
+            #  pad del oeste: el clamp a su derecha, centrado en su y
+            x, y = BUS_EDGE, cy - ESD_H / 2
+        else:
+            #  pad del norte: el clamp debajo, centrado en su x
+            x, y = cx - ESD_W / 2, AREA / DBU - ESD_MARGEN - ESD_H
+        #  dentro del area util, pase lo que pase
+        x = min(max(x, BUS_EDGE), AREA / DBU - ESD_MARGEN - ESD_W)
+        y = min(max(y, BUS_EDGE), AREA / DBU - ESD_MARGEN - ESD_H)
+        out[name] = (round(x, 3), round(y, 3))
+        ocupado.append((x, y, x + ESD_W, y + ESD_H))
+    return out, ocupado
+
+
 def build():
     pins = read_def_pins(PADFRAME / f"{CELL}.def")
     terms = read_terminals(PADFRAME / f"{CELL}_interface.yaml")
     info = yaml.safe_load((PROJECT / "info.yaml").read_text())["pins"]
     senal = {p["name"]: p["io_type"] for p in info}
+    #  DERIVADO del info.yaml, no listado a mano: quien lleve `secondary_esd`
+    #  lleva clamp, y anadir un pin analogico alli basta para que aparezca aqui.
+    con_esd = [p["name"] for p in info if p.get("secondary_esd")]
 
     #  Every DEF pin gets classified into exactly one of four kinds, and the
     #  classification is DERIVED, never listed by hand: add a pin to info.yaml
@@ -180,10 +255,27 @@ def build():
     for name, (que, quien) in conexion.items():
         if que == "rail":
             v.append(f"  assign {name} = {quien};")
+    #  Los clamps de ESD secundario, uno por pin analogico. La senal pasa POR
+    #  ellos: el pad ataca `ASIG5V` y el nucleo cuelga de `to_gate`, que es el
+    #  otro lado de la resistencia en serie.
+    if con_esd:
+        v.append("")
+        v.append(f"  // Secondary ESD, one {ESD_CELL} per analogue pin.")
+        v.append("  // Series resistor plus the two diodes, NEXT TO THE PAD:")
+        v.append("  // anything between the pad and the clamp is unprotected.")
+        for name in con_esd:
+            v.append(f"  wire {name}{ESD_SUF};")
+        for name in con_esd:
+            v.append(f"  {ESD_CELL} x_esd_{name} ("
+                     f".PAD({name}), .CORE({name}{ESD_SUF}), "
+                     f".VDD(VDD), .VSS(VSS));")
+
     v += ["", f"  {MACRO} x_core ("]
     arg = []
     for p in macro_pins:
-        if p in conexion and conexion[p][0] == "directo":
+        if p in con_esd:                         # detras de su clamp
+            arg.append(f".{p}({p}{ESD_SUF})")
+        elif p in conexion and conexion[p][0] == "directo":
             arg.append(f".{p}({p})")
         else:                                    # a digital output: goes to _OUT
             arg.append(f".{p}({p}_OUT)")
@@ -232,11 +324,30 @@ def build():
                                 if conexion.get(n, ("",))[0] == "dato" else None)
         if m in die:
             real.append((m, boxes))
+    #  LOS CLAMPS SON ZONA VEDADA para el macro. Van pegados a los pads, o sea
+    #  en la franja oeste y en la norte, y el nucleo tiene que buscarse la vida
+    #  en lo que queda -- que sobra: 460.9 x 387 dentro de unos 920 x 910.
+    esd_pos, esd_cajas = sitio_esd(pins, con_esd)
+
+    #  Con un halo: pegado no vale. Sin el, el optimizador dejaba el nucleo a
+    #  0.35 um del clamp del oeste, donde no cabe ni una pista de las que tienen
+    #  que salir del propio clamp hacia el bloque.
+    ESD_HALO = 12.0
+
+    def choca(x, y):
+        ax0, ay0, ax1, ay1 = x, y, x + die["_w"], y + die["_h"]
+        return any(ax0 < bx1 + ESD_HALO and ax1 > bx0 - ESD_HALO
+                   and ay0 < by1 + ESD_HALO and ay1 > by0 - ESD_HALO
+                   for bx0, by0, bx1, by1 in esd_cajas)
+
     best = None
     y = KEEPOUT
     while y <= AREA / DBU - die["_h"] - KEEPOUT:
         x = KEEPOUT
         while x <= AREA / DBU - die["_w"] - KEEPOUT:
+            if choca(x, y):
+                x += 5.0
+                continue
             c = sum(abs((b[0][1] + b[0][3]) / 2 / DBU - (x + die[m][0]))
                     + abs((b[0][2] + b[0][4]) / 2 / DBU - (y + die[m][1]))
                     for m, b in real)
@@ -244,12 +355,21 @@ def build():
                 best = (c, x, y)
             x += 5.0
         y += 5.0
+    if best is None:
+        sys.exit(f"  {die['_w']:.1f} x {die['_h']:.1f} um no cabe dejando sitio "
+                 f"a los {len(esd_cajas)} clamps de ESD")
     t.append("")
     t.append(f"#  cost {best[0]:.0f} um over the {len(real)} signal and supply pins")
     t.append(f"set MACRO_ORIGIN {{{best[1]:.3f} {best[2]:.3f}}}")
     t.append(f"set MACRO_SIZE {{{die['_w']:.3f} {die['_h']:.3f}}}")
     t.append("")
     t.append("set PIN_ORDER {" + " ".join(n for n, *_ in pins) + "}")
+    t.append("")
+    t.append(f"#  Los {len(esd_pos)} clamps de ESD secundario, cada uno junto a su pad.")
+    t.append(f"set ESD_CELL {ESD_CELL}")
+    for name, (x, y) in esd_pos.items():
+        t.append(f"set ESD({name}) {{{x:.3f} {y:.3f}}}")
+    t.append("set ESD_PINS {" + " ".join(esd_pos) + "}")
     (ROOT / "constraints" / f"{CELL}_pins.tcl").write_text("\n".join(t) + "\n")
 
     cuenta = {}

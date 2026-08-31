@@ -202,6 +202,48 @@ _OBS_GROW = {"Metal1": 0.23, "Metal2": 0.30 + _MEDIO_CABLE,
              "Metal4": 0.30 + _MEDIO_CABLE + 1.2, "Metal5": 0.30}
 
 
+def _pin_regions(lef_text: str) -> dict[str, "kdb.Region"]:
+    """La geometria de los PIN, por capa. Es lo que NUNCA puede quedar tapado."""
+    out: dict[str, kdb.Region] = {}
+    cuerpo = lef_text[:lef_text.index("  OBS")] if "  OBS" in lef_text else lef_text
+    capa = None
+    for line in cuerpo.splitlines():
+        m = re.match(r"\s*LAYER (\S+) ;", line)
+        if m:
+            capa = m.group(1)
+            continue
+        m = re.match(r"\s*RECT ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ;", line)
+        if m and capa:
+            x0, y0, x1, y1 = (float(v) for v in m.groups())
+            out.setdefault(capa, kdb.Region()).insert(
+                kdb.Box(round(x0 * 1000), round(y0 * 1000),
+                        round(x1 * 1000), round(y1 * 1000)))
+    for r in out.values():
+        r.merge()
+    return out
+
+
+def _rects(region: "kdb.Region") -> list:
+    """La region como RECTANGULOS de verdad, no como el bbox de cada poligono.
+
+    **El bbox es lo que enterraba un pin.** Al engordar 0.49 um y fusionar, las
+    islas de metal3 de `OPAM_LIN_flat` se vuelven un solo poligono en forma de
+    peine cuyo bbox mide 22 x 8 um: escrito asi, la obstruccion tapaba los tres
+    recuadros del pin `INP`, que estan dentro de ese rectangulo pero fuera del
+    metal. El router lo dijo como
+    `[ERROR DRT-0073] No access point for x1_x1/INP (OPAM_LIN_flat)`, que aborta
+    el ruteo del top entero y no menciona ni obstrucciones ni pines.
+
+    Todo lo que entra son cajas ortogonales, asi que la descomposicion en
+    trapecios devuelve rectangulos exactos.
+    """
+    out = []
+    for poly in region.merged().each():
+        for tr in poly.decompose_trapezoids():
+            out.append(tr.bbox())
+    return out
+
+
 def add_via_obstructions(lef_text: str, extra: dict[str, list] | None = None,
                          exacta: dict[str, list] | None = None) -> str:
     """Rewrites the OBS block: grows the metals and adds the via layers.
@@ -252,6 +294,16 @@ def add_via_obstructions(lef_text: str, extra: dict[str, list] | None = None,
         if name in by_layer:
             by_layer[name] = by_layer[name].sized(round(grow * 1000)).merged()
 
+    #  Y LOS PINES SE RESTAN. Una obstruccion que solapa un PIN deja el pin
+    #  inaccesible: el router no distingue "esto es mio" de "esto esta ocupado".
+    #  Engordar 0.49 um y fusionar hace que las islas vecinas se coman el hueco
+    #  donde vive el pin, asi que se recorta despues de engordar, que es cuando
+    #  el dano esta hecho.
+    pines = _pin_regions(lef_text)
+    for name in list(by_layer):
+        if name in pines:
+            by_layer[name] = (by_layer[name] - pines[name]).merged()
+
     #  Despues de engordar, nunca antes.
     for name, boxes in (exacta or {}).items():
         for x0, y0, x1, y1 in boxes:
@@ -270,8 +322,7 @@ def add_via_obstructions(lef_text: str, extra: dict[str, list] | None = None,
         if r.is_empty():
             continue
         extra.append(f"      LAYER {via} ;")
-        for poly in r.each():
-            b = poly.bbox()
+        for b in _rects(r):
             extra.append(f"        RECT {b.left / 1000:.3f} {b.bottom / 1000:.3f} "
                          f"{b.right / 1000:.3f} {b.top / 1000:.3f} ;")
 
@@ -281,16 +332,14 @@ def add_via_obstructions(lef_text: str, extra: dict[str, list] | None = None,
         if name not in by_layer:
             continue
         extra.append(f"      LAYER {name} ;")
-        for poly in by_layer[name].each():
-            b = poly.bbox()
+        for b in _rects(by_layer[name]):
             extra.append(f"        RECT {b.left / 1000:.3f} {b.bottom / 1000:.3f} "
                          f"{b.right / 1000:.3f} {b.top / 1000:.3f} ;")
     for name, region in by_layer.items():
         if name in _OBS_GROW or name in _VIA_BETWEEN:
             continue                       # Nwell y demas, tal cual venian
         extra.append(f"      LAYER {name} ;")
-        for poly in region.each():
-            b = poly.bbox()
+        for b in _rects(region):
             extra.append(f"        RECT {b.left / 1000:.3f} {b.bottom / 1000:.3f} "
                          f"{b.right / 1000:.3f} {b.top / 1000:.3f} ;")
 

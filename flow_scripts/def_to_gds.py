@@ -183,6 +183,58 @@ def flatten_all(layout, top) -> None:
             top.shapes(li).insert(txt)
 
 
+def die_box(def_path: Path) -> kdb.DBox:
+    """The `DIEAREA` of a DEF, in um. The only authority on where this top ends."""
+    m = re.search(r"^DIEAREA\s+\(\s*(-?\d+)\s+(-?\d+)\s*\)\s+"
+                  r"\(\s*(-?\d+)\s+(-?\d+)\s*\)\s*;",
+                  def_path.read_text(), re.M)
+    if not m:
+        sys.exit(f"{def_path.name} has no DIEAREA line")
+    dbu = def_dbu(def_path)
+    x0, y0, x1, y1 = (int(v) * dbu for v in m.groups())
+    return kdb.DBox(x0, y0, x1, y1)
+
+
+def una_sola_frontera(layout, top, def_path) -> None:
+    """Exactly ONE PR_bndry (0/0) on the top, redrawn from the DEF's DIEAREA.
+
+    **Call this AFTER flattening.** It clears the top cell's own 0/0 shapes, and
+    before the flatten the ones that matter are still down in the macro cells.
+
+    Why it is needed. The DEF reader draws the die outline on 0/0. So does this
+    script, one level down: `gds/GRADIENT_NAV2.gds` is itself a top that this
+    same script produced, DIEAREA and all. Substituting that macro and
+    flattening therefore carries ITS outline up here, and the integrated area
+    ends up with two -- the 1110 x 1110 of the user area and the 418.24 x 442.19
+    of the block sitting inside it.
+
+    That is what stopped the chipathon from regenerating B26's padring DEF:
+    "Top level has 2 PR_bndry shapes. only one is allowed."
+    (sscs-ose/sscs-chipathon-2026#58, and "Error recreating def files for B26"
+    in #chipathon-announcements). Their script cannot tell which of the two is
+    the die.
+
+    Nothing else in this flow would ever have said so: **neither DRC nor LVS
+    looks at 0/0.** The block on its own was always fine -- one top, one outline
+    -- and the second one only appeared when the deliverable became the
+    integrated area.
+    """
+    li = layout.layer(0, 0)
+    top.shapes(li).clear()
+    top.shapes(li).insert(die_box(def_path))
+
+    #  Counted the way THEY count it: every shape, unmerged. Merging turns two
+    #  overlapping outlines into one and hides exactly this bug -- which is how
+    #  it went unnoticed on our side while their check failed on theirs.
+    it, n = top.begin_shapes_rec(li), 0
+    while not it.at_end():
+        n += 1
+        it.next()
+    if n != 1:
+        sys.exit(f"  {n} PR_bndry shapes on {top.name}; exactly 1 is allowed")
+    print(f"  PR_bndry   1 shape, {die_box(def_path)}")
+
+
 def main() -> int:
     # The **routed** DEF by default: the floorplan one has no signal nets, and a
     # GDS without them looks complete and is not.
@@ -263,6 +315,9 @@ def main() -> int:
 
     normalizar_origen(layout, macro_lefs)
     flatten_all(layout, top)
+    #  AFTER the flatten: that is when the macro's own die outline has arrived
+    #  in this cell and can be thrown away. See the docstring.
+    una_sola_frontera(layout, top, def_path)
     #  Second pass: moving a cell leaves it marked, and `cells()` keeps counting
     #  the ones flattening orphaned until it is cleaned again. The file already
     #  came out with a single cell; what misled was the number on this line.

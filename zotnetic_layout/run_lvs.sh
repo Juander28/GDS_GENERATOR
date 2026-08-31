@@ -126,13 +126,48 @@ for B in $BLOQUES; do
     case "$HOJA" in
         2k|3k) SETUP=$(dirname "$0")/lvs/gf180mcuD_setup_polyres.tcl ;;
     esac
+    #  Y tambien con el `ppolyf_u` PELADO, que es el de los clamps de ESD: el
+    #  setup del PDK solo conoce los `_<n>k`.
+    if grep -qE "\bppolyf_u\b" "$REF"; then
+        SETUP=$(dirname "$0")/lvs/gf180mcuD_setup_polyres.tcl
+    fi
+
+    #  LA REFERENCIA, CON LAS RESISTENCIAS DE POLI COMO LLAMADA A SUBCIRCUITO.
+    #  netgen no sabe leer una linea de tres terminales
+    #
+    #      R1 CORE PAD VDD ppolyf_u W=16e-06 L=4e-06 R=87.5
+    #
+    #  como una `R`: toma el tercer nodo por el valor e inventa un dispositivo
+    #  llamado `VDD`. Se ve en su informe como `$4/(end_a|end_b)` contra
+    #  `VDD/(end_a|end_b)`, que no se parece en nada a su causa. Como llamada a
+    #  subcircuito si la entiende, y ademas es como magic extrae la suya.
+    #  Es el mismo arreglo que lleva `openroad/scripts/lvs_netgen.py`.
+    REF_NG=$REF
+    if grep -qE "^[Rr][^ ]* .*ppolyf" "$REF"; then
+        REF_NG=$D/lvs/$(basename "${REF%.spice}")_netgen.spice
+        sed -E 's/^([Rr][^ ]* .*ppolyf.*)$/X\1/' "$REF" > "$REF_NG"
+    fi
+
+    #  Y LA EXTRACCION IGUAL. KLayout la escribe con el valor EN MEDIO:
+    #
+    #      R$9 PAD CORE VDD 87.5 ppolyf_u L=4U W=16U
+    #
+    #  que netgen lee como una `R` de dos nodos con el tercero por valor, e
+    #  inventa un dispositivo llamado `VDD`. Convertir solo la referencia dejaba
+    #  el desajuste en el otro lado: `VDD (1)` contra `ppolyf_u (1)`.
+    CIR_NG=$CIR
+    if [ -s "$CIR" ] && grep -qE "^[Rr][^ ]* .*ppolyf" "$CIR"; then
+        CIR_NG=${CIR%.cir}_netgen.cir
+        sed -E 's/^([Rr][^ ]+ +[^ ]+ +[^ ]+ +[^ ]+) +[0-9.eE+-]+ +(ppolyf[^ ]*)/X\1 \2/' \
+            "$CIR" > "$CIR_NG"
+    fi
 
     echo "  --> 2/2  comparacion con netgen"
     if [ -s "$CIR" ]; then
         #  netgen devuelve 0 aunque los circuitos NO casen, asi que su codigo de
         #  salida no sirve de veredicto: hay que leer el fichero de comparacion.
         timeout 3000 netgen -batch lvs \
-            "$CIR $B" "$REF $B" \
+            "$CIR_NG $B" "$REF_NG $B" \
             "$SETUP" \
             "$D/lvs/netgen.out" > "$D/lvs/netgen.log" 2>&1
     else

@@ -1069,6 +1069,74 @@ def _hbar(c, x0, x1, y, h, layer):
     return None
 
 
+def _m1_ocupado(top, info, y_riel, alto=RAIL_WIDTH, margin=None):
+    """Intervalos x donde un tap DENTRO del riel chocaria con metal1.
+
+    **`y_riel` es el BORDE INFERIOR del riel, no su centro.** Es lo que guarda
+    `lay.vgnd_y` en este modulo -- el riel ocupa `[y_riel, y_riel + RAIL_WIDTH]`
+    --, y tomarlo por el centro deja la franja recortada medio riel mas abajo:
+    el metal1 del riel sobrevive al corte, sale un unico intervalo de punta a
+    punta y la celda se queda sin una sola toma.
+
+    Lo que estorba a un tap metido en el riel **no es el dispositivo: es su strap
+    de potencia**, y son cosas de tamanos muy distintos. `_device_x_spans` bloquea
+    el bbox entero del dispositivo -- difusion, poly, dualgate e implante -- y con
+    las dos filas N proyectadas sobre la misma x eso tapa la celda de punta a
+    punta. Medido en WEIGHT_COMP: la banda del riel VGND (y 3.81..4.71) esta
+    **vacia de COMP y de poly en 45 um**, y aun asi solo cabian dos taps, en
+    x=29.52 y x=38.58. Todo el NCOMP a la izquierda de x=14.5 se quedaba a mas de
+    15 um del mas cercano: seis `DF.14_MV`.
+
+    Los straps de verdad son estrechos -- entre 0.23 y 1.0 um -- y dejan sitio de
+    sobra. Asi que se miran, en las dos bandas de metal1 que rodean al riel: la de
+    abajo porque por ahi suben los straps de la fila de abajo, y la de arriba
+    porque por ahi suben los de la de arriba Y el propio metal1 del tap, que va
+    del tap al borde superior del riel.
+
+    Se mide la geometria ya dibujada en vez de deducirla del modelo de colocacion:
+    los straps los pone el PCell de cada dispositivo y aqui no hay una lista de
+    donde caen.
+    """
+    import klayout.db as kdb
+    #  `TAP_CLEAR` se define mas abajo en el modulo y un valor por defecto se
+    #  evalua al DEFINIR la funcion, no al llamarla: puesto en la firma, el
+    #  import del modulo revienta con NameError.
+    margin = TAP_CLEAR if margin is None else margin
+    capa = top.kcl.layout.layer(*info.metals[0].layer)
+    #  Por el BBOX de cada forma y no por su poligono: `Shape.dpolygon` devuelve
+    #  None para las que se insertaron como caja, que aqui son casi todas. Para
+    #  sacar intervalos en x el bbox da lo mismo y no se rompe con paths ni
+    #  textos.
+    dbu = 1e-3
+    reg = kdb.Region()
+    it = top.begin_shapes_rec(capa)
+    while not it.at_end():
+        reg.insert(it.shape().dbbox().transformed(it.dtrans()).to_itype(dbu))
+        it.next()
+    reg.merge()
+    #  Y SE CORTA EL RIEL. Los straps llegan hasta el, asi que al fusionar se
+    #  vuelven una sola forma con el, cuyo bbox va de punta a punta de la celda:
+    #  medido, un unico intervalo (-1.25, 41.53) que dejaba la tira entera
+    #  ocupada y la celda sin una sola toma de sustrato. Quitando la franja del
+    #  riel, cada strap vuelve a ser una forma con su propia x.
+    reg -= kdb.Region(kdb.DBox(-1e4, y_riel - GRID,
+                               1e4, y_riel + RAIL_WIDTH + GRID).to_itype(dbu))
+    reg.merge()
+    fuera = []
+    #  Las bandas NO pueden rozar el riel. Empezandolas justo en su borde, el
+    #  propio metal1 del riel -- que va de punta a punta de la celda -- entra en
+    #  la interseccion y deja la tira entera ocupada: de dos taps se pasaba a
+    #  cero. `GRID` de separacion basta y no se come ningun strap, que llegan al
+    #  riel pero vienen de mucho mas lejos.
+    for lo, hi in ((y_riel - alto, y_riel - GRID),
+                   (y_riel + RAIL_WIDTH + GRID, y_riel + RAIL_WIDTH + alto)):
+        banda = kdb.Region(kdb.DBox(-1e4, lo, 1e4, hi).to_itype(dbu))
+        for q in (reg & banda).merged().each():
+            b = q.bbox()
+            fuera.append((b.left * dbu - margin, b.right * dbu + margin))
+    return sorted(fuera)
+
+
 def _gf180_nwell_and_taps(top, info, placed, p_devs, n_devs, vpwr_y, vgnd_y, width):
     """nwell continuo sobre la fila p + taps n+ a VPWR y p+ a VGND."""
     # nwell continuo cubriendo toda la fila de pfets
@@ -1136,7 +1204,8 @@ def _gf180_nwell_and_taps(top, info, placed, p_devs, n_devs, vpwr_y, vgnd_y, wid
     # El pozo del dispositivo a caballo se lleva por delante su franja: un tap p+
     # ahi seria pplus DENTRO del nwell — error de DRC y, peor, un corto entre VGND
     # y el pozo de VDD. Se marca como ocupada.
-    busy_p = _device_x_spans(placed, ("n1", "n2"))
+    #  De los STRAPS, no de los bbox de los dispositivos: ver `_m1_ocupado`.
+    busy_p = _m1_ocupado(top, info, vgnd_y)
     if span:
         busy_p = sorted(busy_p + [(min(pd.ref.dxmin for pd in span)
                                    - NWELL_ENC - TAP_CLEAR, width + 1.0)])

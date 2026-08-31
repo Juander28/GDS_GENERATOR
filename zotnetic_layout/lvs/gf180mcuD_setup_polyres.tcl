@@ -33,6 +33,16 @@ set cells1 [cells list -all -circuit1]
 set cells2 [cells list -all -circuit2]
 
 set devices {}
+#  El `ppolyf_u` PELADO tambien. El setup del PDK solo conoce los `_<n>k`, y una
+#  linea de tres terminales con el modelo sin sufijo
+#
+#      RR1_Xx_esd_S4P_1 S4P_I S4P VDD ppolyf_u W=4e-05 L=1e-05
+#
+#  la lee tomando el tercer nodo por el valor: inventa un dispositivo llamado
+#  `VDD`. Es la resistencia en serie de los once clamps de ESD de los
+#  organizadores, y sin declararla el LVS de `B26_A` acababa en
+#  `ppolyf_u (11) | (no matching element)` contra `(no matching element) | VDD (11)`.
+lappend devices ppolyf_u
 lappend devices ppolyf_u_2k
 lappend devices ppolyf_u_3k
 lappend devices ppolyf_u_2k_6p0

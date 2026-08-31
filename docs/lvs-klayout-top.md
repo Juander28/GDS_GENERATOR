@@ -1,7 +1,33 @@
 # Why the KLayout LVS does not match on the top, and netgen does
 
-Written 2026-08-31. Measured on the extraction of `out_integration/B26_A.gds`
-(`out/lvs_klayout_B26_A/B26_A.cir`) against `work_lvs/B26_A_klayout.spice`.
+Written 2026-08-31, against `work_lvs/B26_A_klayout.spice`.
+
+> **THE EXTRACTION USED HERE WAS STALE, AND IT MATTERS.** The numbers below come
+> from `out/lvs_klayout_B26_A/B26_A.cir`, which is **the run of 29 August** —
+> committed in `4e1a145`, two days and two GDS generations before the file it
+> was compared against. The KLayout deck's own re-run on today's GDS had not
+> finished when this was written; it takes hours where an earlier one took
+> thirteen seconds.
+>
+> **What is still true** regardless: the tool findings, §1 (the rails cannot
+> anchor because of the `|` labels), §2 (the depth cliff) and §4 (the four
+> dangling ports in the reference, which is today's file).
+>
+> **What is NOT today's layout**: everything in §5 about the clamps' wiring. In
+> that old extraction the eleven clamps had their well off `VDD` and, on five of
+> them, the series resistor shorted end to end. Both were **fixed on 30 August**.
+> magic's extraction of the current GDS — `work_lvs/B26_A_extracted.spice`,
+> 31 August — shows all eleven as
+>
+>     X22 S4N a_23448_50576# VDD ppolyf_u r_width=16u r_length=4u
+>
+> pad on one end, a node of its own on the other, **well on `VDD`**, and all 44
+> `pd2ns` diodes to `VDD`. Nothing is shorted and nothing floats.
+>
+> **The lesson, and it is the same one the DRC archive already enforces**: a run
+> directory older than the GDS is not a verdict about that GDS.
+> `archivar_integracion.py` rejects that case with `STALE — the run predates this
+> GDS`. There is no such guard on the LVS run directories, and there should be.
 
 **Read this before anyone concludes the chip is wrong.** It is not.
 
@@ -116,3 +142,54 @@ not finish at all -- fifty-six minutes without a single progress line, against
 eleven seconds on the same circuit unfilled. The floating fill multiplies the
 nets to extract. Since `LAYOUT_FILE` points at the filled GDS, an external LVS
 reading it may simply time out.
+
+
+---
+
+## 5. Where the three extra nets went (on the stale extraction)
+
+The user's question: the schematic has 946 nets and the layout 943. Where do the
+three go? Counted without `combine_devices`, so that nothing is merged away:
+
+| | layout | schematic |
+|---|---|---|
+| nets, total | 943 | 946 |
+| of those, with **no device terminal at all** | 0 | **4** |
+| so, connected | **943** | 942 |
+
+So the three are really **four minus one**:
+
+* **four** are the dangling ports of §4 — `XP_IN`, `XN_IN`, `YP_IN`, `YN_IN`,
+  which exist in the schematic and touch nothing;
+* and then the layout has **one connected net more** than the schematic.
+
+That one came from the clamps. The two largest nets are the rails, and only one
+of them agreed:
+
+    VSS   1696 terminals in the layout   1696 in the schematic     equal
+    VDD   1618 terminals in the layout   1673 in the schematic    -55
+
+**55 = 44 + 11**: the 44 cathodes of the `pd2nw` diodes and the 11 well
+terminals of the series resistors — every n-well connection in the eleven
+clamps. In that extraction they were not on `VDD`. Per device:
+
+    layout (29 Aug)                     schematic
+    A=S4P  B=S4P  W=$5                  A=S4P_I  B=S4P  W=VDD
+    A=S4N  B=S4N  W=$9                  A=S4N_I  B=S4N  W=VDD
+    A=Z    B=Z    W=$13                 A=Z_I    B=Z    W=VDD
+    ...
+    A=$14435  B=S1N  W=S1N              A=S1N_I  B=S1N  W=VDD
+
+Two faults in one picture: on the five west clamps **the resistor has both ends
+on the same net** — shorted, the pad and the core are one node — and on all
+eleven **the well is somewhere other than `VDD`**, floating on the west five and
+sitting on the pad net on the north six.
+
+**Both were found and fixed on 30 August**, which is why this extraction no
+longer describes the design: see the note at the top, and
+`work_lvs/B26_A_extracted.spice` for what magic reads off today's GDS.
+
+What is worth keeping from it is the arithmetic, because it will work again on
+the fresh extraction: **the rails' terminal counts are the fastest way to find a
+supply that is not connected**. 55 missing terminals on `VDD` named the eleven
+clamps without opening a layout viewer.

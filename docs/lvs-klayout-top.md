@@ -103,7 +103,7 @@ confuses each pad with its own internal node -- `X` against `X_I`, the two ends
 of the same series resistor. **The rails alone give the best of both**, so the
 ladder carries the anchor mode as a second axis.
 
-### 4. The reference declares four ports that connect to nothing
+### 4. The reference declared four ports that connect to nothing — FIXED 2026-08-31
 
 `XSCHEM/B26_A.sch` leaves `XP_IN`, `XN_IN`, `YP_IN`, `YN_IN` as ports of the top
 that appear **nowhere else in the netlist** -- no device touches them. The layout
@@ -111,8 +111,20 @@ cannot have a counterpart, so those four are unmatched for ever. (`ZP_IN` and
 `ZN_IN` exist in the schematic and do not survive into the port list at all,
 which is the same defect showing its other face.)
 
-Removing them by hand takes the residual from 33 unmatched nets to 29 -- exactly
-the four. **This one is in the schematic and is still open.**
+Removing them by hand took the residual from 33 unmatched nets to 29 -- exactly
+the four.
+
+**Fixed.** The six `ipin` symbols are out of `XSCHEM/B26_A.sch`, and the port
+list is now the nineteen pins of `info.yaml` and nothing else, checked name by
+name under the documented `<sig>` -> `<sig>_OUT` mapping. After regenerating:
+reference 23 ports -> 19 with the same 2067 devices, netgen still `Circuits
+match uniquely`, and the hand comparer 30 unmatched nets -> 26. No GDS changed.
+
+**And a trap on the way out.** `lvs_reference.py` reads the xschem export **that
+is on disk** and does not re-run xschem, so editing the schematic and
+regenerating the reference gave 23 ports again, unchanged. `make netlist T=B26_A`
+is what forces the export -- and the Makefile already says why, in the comment
+above that target. The export on disk was two days old.
 
 ---
 

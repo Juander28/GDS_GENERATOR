@@ -1,6 +1,6 @@
 # HANDOFF — where this design stands, and how to pick it up cold
 
-Last updated **2026-08-31**. Written so a chat that has never seen this tree can
+Last updated **2026-09-01**. Written so a chat that has never seen this tree can
 carry on without re-deriving anything. Read this first, then
 `openroad/README.md` (the long logbook) and `zotnetic_layout/DRC_KLAYOUT.md`.
 
@@ -269,84 +269,54 @@ deleted — they are simply not what gets instantiated.**
 
 ## 5. Where the flow stands, block by block
 
-Measured 2026-08-31.
+Measured 2026-09-01. **The deliverable is clean; nothing has to be rebuilt.**
 
 | thing | state | evidence |
 |---|---|---|
-| `COMP`, `DECODER`, `DECODER_MAX`, `OPAM`, `OPAM_LIN_flat`, `WEIGHT_COMP` | **built, clean** — KLayout LIMPIO, netgen CASAN | `layouts_v2/*/lvs/RESUMEN.txt`, 2026-08-29 18:10 |
-| `ESD_CDM` | **built, clean** | `layouts_v2/ESD_CDM/lvs/RESUMEN.txt`, 2026-08-30 07:37 |
-| `OPAM_SUMA` | **broken, and left broken on purpose** — NO CASAN in both engines. `GRADIENT_NAV2` does not use it. | same file |
-| `GRADIENT_NAV2` | **rebuilt**, 460.90 x 386.99 um, netgen `Circuits match uniquely` | `out_v2_GRADIENT_NAV2/`, 2026-08-29 |
-| `B26_A` integration | **done**, 11 x `ESD_CDM` placed by the pads | `out_integration/B26_A.gds`, 2026-08-30 08:05 |
-| `B26_A_filled.gds` | **built**, archived as `integration/gds/2026-08-30_03` | sha256 `5982dfe4...` |
-| — density | **clean** | `out/density_B26_A_FILLED` |
-| — LVS netgen | **`Circuits match uniquely`**, 1442 devices, 894 nets | `out/lvs_netgen_B26_A.rpt` |
-| — `check_integration.py` | **17 / 17**, 11 of them through their clamp | script output |
-| — `PR_bndry` | **1**, on all four GDS files | `def_to_gds.py::una_sola_frontera()` |
-| — current density | **passes**: 48.00 um of section against 22.10 required | `check_current_density.py` |
-| — sign-off DRC, split tables | 63 tables, 0 violations | `out/drc_B26_A_FILLED` |
-| — sign-off DRC, **`main`/deep** | **11 x `MSLOT.1`**, everything else clean | the run of 2026-08-31 |
+| `COMP`, `DECODER`, `DECODER_MAX`, `OPAM`, `OPAM_LIN_flat`, `WEIGHT_COMP` | **built, clean** — KLayout LIMPIO, netgen CASAN | `layouts_v2/*/lvs/RESUMEN.txt` |
+| `ESD_CDM` | **built, clean** | `layouts_v2/ESD_CDM/lvs/RESUMEN.txt` |
+| `OPAM_SUMA` | **broken, and left broken on purpose** — `GRADIENT_NAV2` does not use it | same file |
+| `GRADIENT_NAV2` | **rebuilt**, 460.90 x 386.99 um, netgen `Circuits match uniquely` | `out_v2_GRADIENT_NAV2/` |
+| **`B26_A_filled2.gds`** — THE DELIVERABLE | archived as `integration/gds/2026-08-31_02`, sha `95ebcf92…` | `lvs_config.json -> LAYOUT_FILE` |
+| — sign-off DRC, **`main`/deep**, on the filled file | **253 rule categories, 0 items** — the first time the submitted file has been through the whole deck, `mslot` included | `out/drc_B26_A_FILLED/B26_A_filled_main.lyrdb` |
+| — density pass | clean | `out/density_B26_A_FILLED` |
+| — `MSLOT.1` | **0** (was 11) | `drc_klayout.mslot1_local` |
+| — `PR_bndry` | **1** | `def_to_gds.una_sola_frontera()` |
+| — LVS netgen | **`Circuits match uniquely`** | `out_integration/lvs_netgen_B26_A.rpt` |
+| — `check_integration.py` | **17 / 17**, 11 through their clamp | script output |
+| — current density | 48.00 um of section against 22.10 required | `check_current_density.py` |
+| — LVS KLayout | **does not match, and it is not the circuit** | [`lvs-klayout-top.md`](lvs-klayout-top.md) |
 
-### THE ONE THING TO DO NEXT
+Two things were fixed on 31 August and are worth knowing about:
 
-**Eleven `MSLOT.1` on Metal2, and they are ours.** Not the fill and not the ESD:
-measured with `mslot1_local` they appear identically on `B26_A_filled.gds` and
-on `B26_A.gds`, and they were there in the previous version with the
-organisers' cell too.
+* **The pin escapes are combs, not plates.** Each signal pin gets a Metal2
+  escape past the two supply buses, drawn as one solid box over the whole pin.
+  On an analogue pad that is eight teeth spanning 44.32 um, so the box came out
+  55.7 x 44.3 um — over 30 um in both directions, which is `MSLOT.1`. Eleven
+  pads, eleven violations, invisible for weeks because `mslot` crashes in
+  split-table mode. `integrate_top.tcl` now draws one 2.54 um finger per tooth
+  plus a 2 um spine at the far end that keeps it a single polygon.
+* **The four dangling ports are gone from `XSCHEM/B26_A.sch`.** Six `ipin`
+  symbols — `XP_IN` … `ZN_IN` — sat in a corner wired to nothing. On this pad
+  `<sig>_OUT` is terminal `A`, the pad's data *input* and the one the block
+  drives; `<sig>_IN` is the receiver output, unused. The port list is now the
+  nineteen pins of `info.yaml` and nothing else.
 
-They are the **pin escape channels**. The padring's pad pin arrives as a comb of
-1.00 x 2.54 um Metal2 rectangles at x 0..1; `integrate_top.tcl` runs each tooth
-straight out to `ESCAPE_X = 55.72`, and the union of the comb comes out as a
-single polygon:
+### What is left, in order
 
-    metal2 in the flagged band (0..60, 118..167): 2 polygons
-       bbox  55.91 x  44.77   area 2445.7 um2   points=36
-       bbox   0.44 x   0.44   area    0.2 um2   points=4
-
-55.91 x 44.77 um — over 30 um in **both** directions, which is exactly what
-`MSLOT.1` forbids without slotting. Eleven of them, one per analog pad, in bands
-every 100 um: `(0,120.34;55.72,164.66)`, `(0,220.34;55.72,264.66)`, ...
-
-Two ways out:
-
-1. **break up the escape** so no 30 x 30 um square fits inside it — a small
-   change around `set ESCAPE_X [pista [expr {$VDD_OFF + $BUS_W + 4.0}]]` in
-   `integrate_top.tcl`. **This is the one to do.**
-2. slot the region, which is what the rule literally asks for and is more work
-   for the same result.
-
-Then, in this order:
-
-```bash
-cd /foss/designs/a_zonetic2026/openroad
-openroad -no_init -exit scripts/integrate_top.tcl
-env -u PYTHONPATH python3 scripts/def_to_gds.py \
-    out_integration/B26_A_routed.def out_integration/B26_A.gds
-
-# the verdict run: one main table, deep, single-threaded -- mslot survives here
-DRC_MODE=deep DRC_THR=1 DRC_MP=1 \
-    make drc T=B26_A TOP_OUT=out_integration ARGS=B26_A
-
-# only once that is zero:
-TOP_OUT=out_integration TOP_CELL=B26_A env -u PYTHONPATH python3 scripts/fill_density.py
-make lvs-ref T=B26_A TOP_OUT=out_integration
-make drc-density T=B26_A TOP_OUT=out_integration
-env -u PYTHONPATH /headless/.venvs/zotnetic/bin/python scripts/check_integration.py
-env -u PYTHONPATH /headless/.venvs/zotnetic/bin/python scripts/check_current_density.py
-env -u PYTHONPATH /headless/.venvs/zotnetic/bin/python scripts/archivar_integracion.py
-```
-
-`make fill` on the 1110 x 1110 die takes about **three hours** and ~1.7 GB of
-RAM; the `main`/deep DRC on the filled file takes longer still. Run both in the
-background, and **fix the geometry before filling** — filling first only means
-doing the three hours twice.
-
-### And the thing that is not ours to do
-
-The submission still waits on **the organisers regenerating the padring** with
-today's pin order (`VSS` first, `VDD` last). `openroad/padframe/B26_A.def` is
-still the 27 August file. What used to block them — the two `PR_bndry` shapes —
-is fixed and pushed; there is nothing of B26 in their repository yet.
+1. **Nothing blocking.** The deliverable passes every check this machine can run.
+2. **The KLayout LVS on the top.** It does not match while netgen does, and the
+   chipathon's external LVS runs the KLayout deck. Four causes are measured in
+   [`lvs-klayout-top.md`](lvs-klayout-top.md); one of them (the dangling ports)
+   is fixed, the rest are the comparer, not the layout. **This is the open
+   submission risk.**
+3. **Two checks that need a bigger machine**, both in
+   [`moving-machine.md`](moving-machine.md) §4: the split-table DRC on the filled
+   GDS, which loses five tables to memory here, and the KLayout LVS on the filled
+   GDS, which does not finish here at all.
+4. **The organisers' regenerated padring.** `openroad/padframe/B26_A.def` is
+   still the 27 August file, built from the old pin order. What used to block
+   them — the two `PR_bndry` shapes — is fixed and pushed.
 
 ---
 

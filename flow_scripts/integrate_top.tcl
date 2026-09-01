@@ -623,10 +623,37 @@ proc pista {v} { return [expr {0.28 + round(($v - 0.28) / 0.56) * 0.56}] }
 set ESCAPE_X [pista [expr {$VDD_OFF + $BUS_W + 4.0}]]
 set ESCAPE_Y [pista [expr {$SIDE_UM - $VDD_OFF - $BUS_W - 4.0}]]
 set n 0
+#  A PLATE, OR A COMB. `MSLOT.1` forbids metal wider than 30 um in BOTH
+#  directions without slotting it, and the escape is 54.7 um long by
+#  construction -- it has to clear both buses. So on a pin whose own height is
+#  also over 30 um the solid plate is a violation, and it was: the eleven
+#  analogue pads are eight teeth spanning 44.32 um, and covering them with one
+#  box gave a 55.7 x 44.3 um plate. Eleven of them, one per analogue pad, and
+#  nothing in the flow saw it for weeks because the PDK's `mslot` table crashes
+#  in split-table mode (see `drc_klayout.mslot1_local` and `docs/drc-full-deck`).
+#
+#  The narrow pins keep the plate -- a digital pin is 0.38 um tall and the rule
+#  cannot touch it. The wide ones get a COMB instead: one finger per tooth,
+#  2.54 um wide, plus a spine at the far end that ties the fingers together.
+#
+#  The comb is a strict SUBSET of the plate it replaces, so no spacing to
+#  anything outside can get worse. What it adds are its own internal gaps, and
+#  those are the pad's own 3.14 and 5.16 um -- ten times `M2.2a`.
+#
+#  The spine is what keeps this ONE polygon. Eight loose fingers would be eight
+#  disjoint shapes carrying the same pin label, and the extractor would come out
+#  with the net split eight ways; LVS would fail on geometry that conducts
+#  perfectly well through the padring. It also gives the router a 44 um landing
+#  edge instead of asking it to hit a 2.54 um finger.
+#
+#  Erosion checks out both ways: 15 um off each side vertically leaves nothing
+#  of a 2.54 um finger, and what survives on the spine is 2 um wide, which the
+#  horizontal erosion then takes.
+set SPINE_W  2.0      ;# the rib that ties the fingers into one polygon
+set PLATE_MAX 29.0    ;# over this, comb instead of plate. `MSLOT.1` is 30.
+set ncomb 0
 foreach p $SIGNALS {
     if {$p eq "VDD" || $p eq "VSS"} { continue }
-    #  the escape spans the WHOLE pin, not one tooth of the comb: an analogue
-    #  pad is eight rectangles and covering one of them leaves slivers.
     set lo {} ; set hi {} ; set a {} ; set b {}
     foreach r $PIN($p) {
         lassign $r layer x0 y0 x1 y1
@@ -639,16 +666,43 @@ foreach p $SIGNALS {
     set bt [$blk findBTerm $p]
     set bp [lindex [$bt getBPins] 0]
     if {$x0 == 0} {
-        set y0 $lo ; set y1 $hi
-        odb::dbBox_create $bp $L(m2) [um [expr {$x1/$PAD_DBU}]] [um [expr {$y0/$PAD_DBU}]] \
-                                     [um $ESCAPE_X]              [um [expr {$y1/$PAD_DBU}]]
+        #  west edge: the escape runs in +x, so the pin's HEIGHT is what the
+        #  rule measures across.
+        set ancho [expr {($hi - $lo) / $PAD_DBU}]
+        if {$ancho <= $PLATE_MAX} {
+            odb::dbBox_create $bp $L(m2) [um [expr {$x1/$PAD_DBU}]] [um [expr {$lo/$PAD_DBU}]] \
+                                         [um $ESCAPE_X]              [um [expr {$hi/$PAD_DBU}]]
+        } else {
+            foreach r $PIN($p) {
+                lassign $r layer rx0 ry0 rx1 ry1
+                odb::dbBox_create $bp $L(m2) [um [expr {$rx1/$PAD_DBU}]] [um [expr {$ry0/$PAD_DBU}]] \
+                                             [um $ESCAPE_X]               [um [expr {$ry1/$PAD_DBU}]]
+            }
+            odb::dbBox_create $bp $L(m2) [um [expr {$ESCAPE_X - $SPINE_W}]] [um [expr {$lo/$PAD_DBU}]] \
+                                         [um $ESCAPE_X]                     [um [expr {$hi/$PAD_DBU}]]
+            incr ncomb
+        }
     } else {
-        odb::dbBox_create $bp $L(m2) [um [expr {$a/$PAD_DBU}]] [um $ESCAPE_Y] \
-                                     [um [expr {$b/$PAD_DBU}]] [um [expr {$y0/$PAD_DBU}]]
+        #  north edge: the escape runs in -y, so the pin's WIDTH is the one
+        #  measured across.
+        set ancho [expr {($b - $a) / $PAD_DBU}]
+        if {$ancho <= $PLATE_MAX} {
+            odb::dbBox_create $bp $L(m2) [um [expr {$a/$PAD_DBU}]] [um $ESCAPE_Y] \
+                                         [um [expr {$b/$PAD_DBU}]] [um [expr {$y0/$PAD_DBU}]]
+        } else {
+            foreach r $PIN($p) {
+                lassign $r layer rx0 ry0 rx1 ry1
+                odb::dbBox_create $bp $L(m2) [um [expr {$rx0/$PAD_DBU}]] [um $ESCAPE_Y] \
+                                             [um [expr {$rx1/$PAD_DBU}]] [um [expr {$ry0/$PAD_DBU}]]
+            }
+            odb::dbBox_create $bp $L(m2) [um [expr {$a/$PAD_DBU}]] [um [expr {$ESCAPE_Y}]] \
+                                         [um [expr {$b/$PAD_DBU}]] [um [expr {$ESCAPE_Y + $SPINE_W}]]
+            incr ncomb
+        }
     }
     incr n
 }
-puts "  $n signal pins given a straight escape past the buses"
+puts "  $n signal pins given a straight escape past the buses ($ncomb as a comb, for MSLOT.1)"
 
 # --- routing the 17 signals --------------------------------------------------
 #  Only Metal2 to Metal4 for signals: Metal5 is where the power runs to the

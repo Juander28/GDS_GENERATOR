@@ -71,11 +71,18 @@ TARGETS = {
     #  The same top with the density fill (`scripts/fill_density.py`). This is
     #  the submission deliverable; the one above stays for the debug loop.
     f"{TOP}_FILLED": OUT / f"{TOP}_filled.gds",
+    #  The delivery pointer. Byte-identical to `_filled`, renamed so that the
+    #  file named in `lvs_config.json` is the file the evidence is filed under:
+    #  `archivar_integracion.py` looks for `out/drc_<CELL>` and reports
+    #  `not run` when the name it is given has no run directory of its own.
+    #  A copy under a new name is how this project marks a verified delivery --
+    #  `_filled2` was the same act -- and each one needs its target here.
+    f"{TOP}_FILLED3": OUT / f"{TOP}_filled3.gds",
 }
 
 
 #: The filled GDS keeps the cell name of the original.
-TOPCELL = {f"{TOP}_FILLED": TOP, f"{TOP}_DECAP": TOP}
+TOPCELL = {f"{TOP}_FILLED": TOP, f"{TOP}_FILLED3": TOP, f"{TOP}_DECAP": TOP}
 
 
 def counts(run_dir: Path) -> collections.Counter:

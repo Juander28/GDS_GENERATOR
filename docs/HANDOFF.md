@@ -128,10 +128,14 @@ WSL2/drvfs is case-insensitive). `layouts_v2/` is genuinely separate.
 * **`MSLOT.1` had never actually run, and nobody could tell.** The deck is
   normally driven table by table, and in that mode the PDK's own `mslot` table
   **crashes** — `undefined method 'sized' for nil:NilClass`, a bug in the deck,
-  not in the design. A crashed table writes **no `.lyrdb`**, and a check that
-  counts result files reads that as *clean*. So every "63 tables, 0 violations"
-  this project ever produced was true about what it said and silent about
-  `MSLOT.1`.
+  not in the design. A crashed table leaves **no usable `.lyrdb`**, and a check
+  that counts result files reads that as *clean*. So every "63 tables, 0
+  violations" this project ever produced was true about what it said and silent
+  about `MSLOT.1`. (**Measured 2026-09-01:** it does write a file — an empty
+  shell of 464 bytes with **zero rule categories**. Worse than writing none,
+  because the file satisfies a file count. Count *categories*, not files; the
+  crash is identified by a zero-category file **plus** an `| ERROR |` line
+  naming that table. See [`drc-full-deck.md`](drc-full-deck.md).)
 
   Two things came out of it. `drc_klayout.py::completo()` no longer accepts a
   run where only `mslot` died without also checking the table count — a run
@@ -277,8 +281,8 @@ Measured 2026-09-01. **The deliverable is clean; nothing has to be rebuilt.**
 | `ESD_CDM` | **built, clean** | `layouts_v2/ESD_CDM/lvs/RESUMEN.txt` |
 | `OPAM_SUMA` | **broken, and left broken on purpose** — `GRADIENT_NAV2` does not use it | same file |
 | `GRADIENT_NAV2` | **rebuilt**, 460.90 x 386.99 um, netgen `Circuits match uniquely` | `out_v2_GRADIENT_NAV2/` |
-| **`B26_A_filled2.gds`** — THE DELIVERABLE | archived as `integration/gds/2026-08-31_02`, sha `95ebcf92…` | `lvs_config.json -> LAYOUT_FILE` |
-| — sign-off DRC, **`main`/deep**, on the filled file | **253 rule categories, 0 items** — the first time the submitted file has been through the whole deck, `mslot` included | `out/drc_B26_A_FILLED/B26_A_filled_main.lyrdb` |
+| **`B26_A_filled3.gds`** — THE DELIVERABLE | the pointer as of 2026-09-01; byte-identical to `_filled2` and `_filled`, sha `95ebcf92…`. Archived under `integration/gds/`, and its DRC is filed under its own name (`out/drc_B26_A_FILLED3`) | `lvs_config.json -> LAYOUT_FILE`, `info.yaml` |
+| — sign-off DRC, **`main`/deep**, on the filled file | **660 rule categories, 0 items** — the first time the submitted file has been through the whole deck, `mslot` included. (Re-counted 2026-09-01: the file declares 660, not the 253 written here and in the archive's `NOTAS.txt`. What decides is the 0 items and `MSLOT.1` being among the categories — the count is descriptive.) | `out/drc_B26_A_FILLED/B26_A_filled_main.lyrdb` |
 | — density pass | clean | `out/density_B26_A_FILLED` |
 | — `MSLOT.1` | **0** (was 11) | `drc_klayout.mslot1_local` |
 | — `PR_bndry` | **1** | `def_to_gds.una_sola_frontera()` |
@@ -317,6 +321,12 @@ Two things were fixed on 31 August and are worth knowing about:
 4. **The organisers' regenerated padring.** `openroad/padframe/B26_A.def` is
    still the 27 August file, built from the old pin order. What used to block
    them — the two `PR_bndry` shapes — is fixed and pushed.
+5. **The LVS run directories have no staleness guard.** `archivar_integracion.py`
+   refuses a DRC run older than the GDS it claims to judge — `STALE — the run
+   predates this GDS` — and there is no equivalent for LVS. That gap is exactly
+   what put a 29 August extraction, two GDS generations old, into
+   [`lvs-klayout-top.md`](lvs-klayout-top.md) as if it described the current
+   layout. **A run directory older than the GDS is not a verdict about that GDS.**
 
 ---
 
@@ -344,8 +354,8 @@ integrated area:
 | key | value |
 |---|---|
 | `TOP_SOURCE` / `TOP_LAYOUT` | `B26_A` |
-| `LAYOUT_FILE` | `$UPRJ_ROOT/FINAL/openroad/out_integration/B26_A_filled.gds` |
-| `LVS_SPICE_FILES` | **stale — still `.../out_v2_GRADIENT_NAV2/GRADIENT_NAV2_lvs.spice`. Point it at `.../out_integration/B26_A_lvs.spice`.** |
+| `LAYOUT_FILE` | `$UPRJ_ROOT/FINAL/openroad/out_integration/B26_A_filled3.gds` |
+| `LVS_SPICE_FILES` | `$UPRJ_ROOT/FINAL/openroad/out_integration/B26_A_lvs.spice` — **corrected 2026-09-01**; it used to point at `.../out_v2_GRADIENT_NAV2/GRADIENT_NAV2_lvs.spice` |
 | `LVS_VERILOG_FILES` | `$UPRJ_ROOT/FINAL/openroad/verilog/B26_A.v` |
 
 `B26_A` now has a schematic of its own, `XSCHEM/B26_A.sch` — the block plus its
@@ -455,7 +465,7 @@ Verify by cloning into a clean directory, not by looking at the working copy:
 ```bash
 git clone git@github.com:AnBuiUCI/sscs-2026-zotnetic.git verify
 cd verify && find FINAL -type l -lname '/*'
-python3 -c "print(open('FINAL/openroad/out_integration/B26_A_filled.gds','rb').read(4).hex())"
+python3 -c "print(open('FINAL/openroad/out_integration/B26_A_filled3.gds','rb').read(4).hex())"
 # 00060002 = valid GDSII header
 ```
 

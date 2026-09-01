@@ -25,6 +25,7 @@ import datetime
 import glob
 import gzip
 import hashlib
+import re
 import shutil
 import sys
 import xml.etree.ElementTree as ET
@@ -152,7 +153,12 @@ def main() -> int:
     #  The run directories of THIS cell, by the naming drc_klayout.py uses.
     cel = gds.stem.upper()
     #  El GDS sin rellenar del que sale este, para fechar su DRC contra el suyo.
-    sin_relleno = gds.with_name(gds.name.replace("_filled", ""))
+    #  `_filled` CARGA UN NUMERO DE VERSION: `_filled2`, `_filled3`. A plain
+    #  `replace("_filled", "")` turns `B26_A_filled3.gds` into `B26_A3.gds`,
+    #  a file that does not exist, and the missing file then reads as
+    #  `STALE` -- a false alarm on a run that is perfectly current. Strip the
+    #  digits with the word.
+    sin_relleno = gds.with_name(re.sub(r"_filled\d*", "", gds.name))
     if not sin_relleno.exists():
         sin_relleno = gds
     notas = [

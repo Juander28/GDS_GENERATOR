@@ -134,6 +134,38 @@ Best measured: **872 of ~900 nets matched, 26 nets and 41 devices left**, and th
 residual is the eleven ESD clamps -- each pad swapped with its own `_I` node
 across the series resistor.
 
+
+### One fix that looks obvious and is not: labelling the `_I` nodes — MEASURED 2026-09-01
+
+The residual is each pad swapped with its own `_I` node across the series
+resistor, and in the layout that `_I` node carries **no label at all**: magic
+extracts it as `a_23448_190688#` while the schematic calls it `X_I`. So the
+comparer has nothing to tell one end of the resistor from the other except
+topology, and eleven identical clamps give it nothing to hold on to.
+
+The obvious move is to label those eleven nodes on the Metal3 label layer
+(42/10) — the more so because labels travel inside the GDS, so they would reach
+the chipathon's external LVS, which our own comparer's settings never can.
+
+**It was tried on a copy of the deliverable, and it makes things worse:**
+
+    deliverable, no labels    .subckt B26_A -> 25 ports, no `_I` among them
+    copy, 11 labels added     .subckt B26_A -> 36 ports, all 11 `_I` present
+
+One new port per label. The reference declares 19, so this moves the port
+mismatch **from 25-against-19 to 36-against-19**. On this top **a label is not a
+hint, it is a port declaration** — the same conclusion `def_to_gds.etiquetar_nets()`
+reached on a different set of nets, now measured a second time. The deliverable
+was never touched: sha `95ebcf92…` unchanged.
+
+What is left that does not touch the layout: `anclas()` builds its anchor map
+with `setdefault`, so a label appearing on more than one net anchors whichever
+net `each_net()` happened to yield first, with no uniqueness check. That fits
+the numbers — `todas` (19 anchors) scores 829 matched against `rieles`
+(2 anchors) at 872. Anchors that are wrong drag the X/Y/Z output stages with
+them. Filtering to labels that are unique on both sides is a small change and
+touches no GDS.
+
 It is not a match, and it should not be recorded as one. What it is:
 
 * not a circuit difference -- see the device table and netgen;

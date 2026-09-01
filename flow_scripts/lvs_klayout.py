@@ -363,26 +363,47 @@ def comparar(cir: Path, ref: Path, work: Path,
             return [p for p in net.expanded_name().upper().split("|")
                     if p and not p.startswith("$")]
 
-        na: dict[str, object] = {}
-        for net in ca.each_net():
-            for et in etiquetas(net):
-                na.setdefault(et, net)
-        nb: dict[str, object] = {}
-        for net in cb.each_net():
-            for et in etiquetas(net):
-                nb.setdefault(et, net)
+        #  ONE NET PER LABEL, and only if there is exactly one.
+        #
+        #  This used to be `setdefault`, which keeps whichever net `each_net()`
+        #  happened to yield first for a repeated label and never says so. An
+        #  ambiguous label then anchors the WRONG net, and `same_nets` is not a
+        #  hint -- it is an assertion the comparer builds on, so everything
+        #  reachable from that net goes with it.
+        #
+        #  That is what the anchor numbers looked like: on `B26_A`, at 8/500,
+        #  `todas` (19 anchors) scored 829 nets matched while `rieles`
+        #  (2 anchors) scored 872. MORE anchors, WORSE result -- which is not
+        #  what a missing anchor does, it is what a false one does.
+        #
+        #  A label that names two nets carries no information about either, so
+        #  it is dropped rather than guessed. Dropping is safe in a way that
+        #  guessing is not: a missing anchor only costs search, a wrong one
+        #  costs correctness.
+        def mapa(circuito):
+            visto: dict[str, list] = {}
+            for net in circuito.each_net():
+                for et in etiquetas(net):
+                    visto.setdefault(et, []).append(net)
+            return ({et: nn[0] for et, nn in visto.items() if len(nn) == 1},
+                    sorted(et for et, nn in visto.items() if len(nn) > 1))
+
+        na, ambiguas_a = mapa(ca)
+        nb, ambiguas_b = mapa(cb)
+        descartadas = sorted(set(ambiguas_a) | set(ambiguas_b))
         n = 0
         for nm in sorted(set(na) & set(nb)):
             if modo == "rieles" and nm not in RIELES:
                 continue
             c.same_nets(ca, cb, na[nm], nb[nm])
             n += 1
-        return n
+        return n, descartadas
 
-    puestas = anclas(cmp, modo)
+    puestas, ambiguas = anclas(cmp, modo)
     ok = cmp.compare(nl_cir, nl_ref)
+    aviso = f" [{len(ambiguas)} etiqueta(s) ambigua(s) descartada(s)]" if ambiguas else ""
     detalle = (f"max_depth={profundidad} max_branch_complexity={ramas}, "
-               f"anclas {modo} ({puestas}): "
+               f"anclas {modo} ({puestas}){aviso}: "
                f"{log.ok} nets emparejadas, sin pareja: {log.nets} nets, "
                f"{log.disp} dispositivos, {log.pines} pines")
     if log.clases:

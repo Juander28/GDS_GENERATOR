@@ -103,6 +103,22 @@ def etiquetar_nets(layout, top, def_path) -> int:
     reference declares the same 55 ports; what does not work is plugging it in
     without touching the other side. Measured: with the labels on, the deck still
     mismos 170 mensajes.
+
+    **RE-MEASURED 2026-09-01, on the eleven ESD clamp internal nodes.** The idea
+    came back — label `X_I`, `Y_I`, `Z_I`, `S1N_I`…`S4P_I` on the Metal3 label
+    layer (42/10) so the comparer can tell each pad from the far end of its own
+    series resistor, which is the whole residual of `lvs-klayout-top.md`. It was
+    tried on a COPY of the deliverable and magic was asked what it made of it:
+
+        deliverable, no labels    .subckt B26_A -> 25 ports, no `_I` among them
+        copy, 11 labels added     .subckt B26_A -> 36 ports, all 11 `_I` present
+
+    25 + 11 = 36, one new port per label. The reference declares 19, so the
+    labels take the port mismatch **from 25-against-19 to 36-against-19** —
+    further away, not closer. The rule holds and is now measured twice on two
+    different sets of nets: **on this top, a label is a port.** Do not reach for
+    this again without changing the reference's port list too, which `info.yaml`
+    fixes at 19.
     """
     #  Inside the function on purpose: `check_connectivity` imports `lef_origin`
     #  from here, and at module level the import would be circular.

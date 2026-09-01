@@ -120,6 +120,25 @@ Do not copy `/foss/pdks` (2.4 GB) or the tools: they come with the image.
 `rsync -a` rather than a zip, so the symlinks in `a_zonetic2026/spice_blocks/`
 survive. `check_environment.py` verifies they resolve.
 
+**This already went wrong once, on the move of 2026-09-01.** The nine links in
+`spice_blocks/` arrived as **regular files of zero bytes**. In the working tree
+their targets are absolute (`/foss/designs/a_zonetic2026/XSCHEM/...`); that path
+does not exist on a host that has not started the container yet, so a copy that
+dereferences links wrote nothing at all.
+
+And the check named in `HANDOFF.md` §9 **cannot see this case**: `find -xtype l`
+reports zero broken links, because there are no links left to be broken. The
+check that catches it is a size check:
+
+    find spice_blocks -type f -empty        # must be empty
+    find spice_blocks -type l -lname '/*'   # must be empty
+
+They were restored as **relative** links (`../XSCHEM/<sub>/simulation/<cell>.sch/<cell>.spice`),
+which is the form the repository stores and the only one that survives the next
+copy. `build_block.py` resolves the link, and `spice_blocks/` is the source of
+truth for every netlist the generator reads — so nine empty files would have
+been nine silently empty builds.
+
 If you would rather clone than copy:
 
 ```bash
@@ -185,6 +204,18 @@ So there are exactly two things to try again with more memory:
    `mslot` crashes in that mode for a reason that is not memory (a bug in the
    PDK deck), so **the verdict stays the `main`/deep run**. See
    [`drc-full-deck.md`](drc-full-deck.md).
+
+   **MEASURED 2026-09-01 on 31 GB: this is confirmed.** `DRC_THR=4 DRC_MP=4`,
+   18m41s wall (63 min CPU), peak ~13 GB of 31.
+
+       63 tables launched, 63 .lyrdb written, 0 violations
+       ldnmos, nwell, ldpmos, lvpwell   all four now run and are clean
+       mslot                            still crashes -- the deck bug, not memory
+
+   The four that used to die of memory are recovered. `mslot` behaves exactly as
+   predicted, so the fast screen is now genuinely 62 of 63 tables. **The verdict
+   is still the `main`/deep run**, which on this machine took 3m51s and was
+   clean with `MSLOT.0`…`MSLOT.9` actually declared.
 2. **The KLayout LVS on the filled GDS**, which is what the chipathon's external
    LVS runs. On the unfilled GDS it took thirteen seconds; on the filled one it
    ran fifty-six minutes without a progress line. That is net count from the
@@ -218,7 +249,7 @@ DRC_THR=4 DRC_MP=4 make drc T=B26_A TOP_OUT=out_integration ARGS=B26_A_FILLED
 make lvs-klayout T=B26_A TOP_OUT=out_integration ARGS=B26_A_FILLED
 ```
 
-The deliverable is `openroad/out_integration/B26_A_filled2.gds`, archived as
+The deliverable is `openroad/out_integration/B26_A_filled3.gds`, archived as
 `integration/gds/2026-08-31_02`. `HANDOFF.md` §5 has the state of everything and
 what is left to do.
 

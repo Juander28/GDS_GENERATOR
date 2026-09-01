@@ -37,10 +37,25 @@ In that mode the PDK's own `mslot` table dies:
 That is a **bug in the deck**, not in the design: the rule builds an empty layer
 and then sizes it. It happens on every design, every time.
 
-Now the part that matters. **A table that dies writes no `.lyrdb`.** A check
-that counts result files and finds no violations therefore reads a crashed table
-as a clean one. That is how every "63 tables, 0 violations" in this project's
-history came to be true about what it said and silent about `MSLOT.1`.
+Now the part that matters. **A table that dies produces no usable `.lyrdb`.** A
+check that counts result files and finds no violations therefore reads a crashed
+table as a clean one. That is how every "63 tables, 0 violations" in this
+project's history came to be true about what it said and silent about `MSLOT.1`.
+
+> **Corrected 2026-09-01, measured.** The original wording here said a crashed
+> table writes *no* `.lyrdb` at all. On KLayout 0.30.8 it does write one — and
+> that is worse, because a file that exists satisfies a file count. What it
+> writes is an **empty shell**: 464 bytes, the cell name, and **zero
+> `<category>` elements**, i.e. not one rule declared.
+>
+>     split run, mslot crashed   B26_A_filled_mslot.lyrdb   0 categories
+>     deep run, mslot ran        B26_A_filled_main.lyrdb    MSLOT.0 … MSLOT.9
+>
+> So **the count that means anything is categories, not files.** Note that a
+> zero-category `.lyrdb` is *not* proof of a crash on its own — in split mode
+> 25 of the 63 tables legitimately declare none, and the same 25 did so in the
+> older `GRADIENT_NAV2` run. What identifies the crash is the pairing: a
+> zero-category file **and** an `| ERROR |` line naming that table in the log.
 
 Run the deck as a **single `main` table in `deep` mode**, single-threaded, and
 `mslot` does not crash. It is far slower and it needs the memory, but it is the
@@ -49,7 +64,7 @@ only run whose "clean" means clean.
 | | split tables | `main`, deep, 1 thread |
 |---|---|---|
 | invocation | default | `DRC_MODE=deep DRC_THR=1 DRC_MP=1` |
-| `mslot` | crashes, writes nothing | **runs** |
+| `mslot` | crashes, writes an empty shell | **runs** |
 | speed | fast, parallel | hours on the full die |
 | what it is for | the screen while iterating | **the verdict** |
 

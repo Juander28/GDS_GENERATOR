@@ -139,6 +139,21 @@ copy. `build_block.py` resolves the link, and `spice_blocks/` is the source of
 truth for every netlist the generator reads — so nine empty files would have
 been nine silently empty builds.
 
+**And the same move stripped the execute bit off all sixteen `.sh` files.** Not
+one came across executable, which surfaces as
+`make: ./scripts/usar_version.sh: Permission denied` in the middle of
+`make collateral`. Worse, they were then committed that way — `100755` to
+`100644` in git, a change that appears in `git log --stat` as a file with zero
+lines changed and is therefore easy to wave past. The checks:
+
+    find . -name '*.sh' ! -perm -u+x        # must be empty
+    git ls-tree -r HEAD | grep '\.sh$'      # every one should read 100755
+
+So a copy between machines loses three things that are not file *contents*:
+symlink targets, the bytes behind them, and permission bits. `rsync -a`
+preserves all three; a plain copy, a zip, or anything that passes through a
+Windows filesystem does not.
+
 If you would rather clone than copy:
 
 ```bash

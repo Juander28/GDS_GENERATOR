@@ -53,6 +53,24 @@ from coil_layout.pdk_manager import get_pdk_module          # noqa: E402
 import gdsfactory as gf                                     # noqa: E402
 
 OUT = Path("/foss/designs/a_zonetic2026/layouts/ESD_CDM")
+
+#: AND THE TOP FLOW DOES NOT READ THAT DIRECTORY.
+#:
+#: `openroad/gds/ESD_CDM.gds` is a symlink, and `usar_version.sh v2` -- which
+#: `make collateral` runs -- points it at **`layouts_v2/ESD_CDM/`**, not at the
+#: `layouts/` above. So regenerating the clamp here changes nothing on the top
+#: until the result is copied across:
+#:
+#:     cp -a layouts/ESD_CDM/ESD_CDM_flat_gf180.gds \
+#:           layouts_v2/ESD_CDM/ESD_CDM_flat_gf180.gds
+#:     cp -a layouts/ESD_CDM/ESD_CDM_lvs.spice \
+#:           layouts_v2/ESD_CDM/ESD_CDM_lvs.spice
+#:
+#: This cost a full integration cycle on 2026-09-01: the merged n-wells were
+#: verified clean on the clamp, the top was rebuilt and refilled, and the DRC
+#: still reported the same 33 NW.2b_MV -- because the symlink was still serving
+#: the old GDS. **The clamp being clean is not the same as the top using it.**
+#: Check with `sha256sum $(readlink -f openroad/gds/ESD_CDM.gds)`.
 CELL = "ESD_CDM"
 
 GRID = 0.005
@@ -235,6 +253,8 @@ def build():
     pad_m1, strips = [], []
     for kind, y, rail_y, tag in (("nd2ps", Y_ND, RAIL_W, "VSS"),
                                  ("pd2nw", Y_PD, Y_VDD, "VDD")):
+        #  Extent of the pd2nw row's n-well, accumulated and drawn ONCE below.
+        nw_x0 = nw_x1 = None
         for k in range(D_N):
             x = DX + k * D_PITCH_X
             d = c.add_ref(getattr(gf180, f"diode_{kind}")(
@@ -256,8 +276,10 @@ def build():
             #  The n-well of a pd2nw has to overlap its p+ comp by 0.6 and its
             #  n+ tap by 0.16; the PCell gives 0.43 and 0.
             if kind == "pd2nw":
-                box(c, L["nwell"], gx0 - 0.16 - 0.10, y - NWELL_PCOMP,
-                    x + D_WA + NWELL_PCOMP, y + D_LA + NWELL_PCOMP)
+                x0 = gx0 - 0.16 - 0.10
+                x1 = x + D_WA + NWELL_PCOMP
+                nw_x0 = x0 if nw_x0 is None else min(nw_x0, x0)
+                nw_x1 = x1 if nw_x1 is None else max(nw_x1, x1)
             else:
                 box(c, (204, 0), gx0 - LVPWELL_ENC, y - LVPWELL_ENC,
                     x + D_WA + LVPWELL_ENC, y + D_LA + LVPWELL_ENC)
@@ -267,6 +289,33 @@ def build():
             sx0, sx1 = gx0 + 0.02, gx1 - 0.02
             strips.append((x, y))
             box(c, L["metal1"], sx0, min(y, rail_y), sx1, max(y + D_LA, rail_y + RAIL_W))
+
+        #  ONE n-well under the whole pd2nw row, not one per diode.
+        #
+        #  All four wells are the same node -- they are the cathodes of the four
+        #  `pd2nw`, i.e. the `m=4` of a single device, and they all sit on VDD.
+        #  Drawn as four islands they were 1.330 um apart, and that is fine ONLY
+        #  if the deck knows they are equipotential: `NW.2a_MV` asks 0.74 um
+        #  between wells at the same potential, `NW.2b_MV` asks 1.7 um between
+        #  wells at different ones, and which of the two applies is decided by
+        #  the connectivity extraction.
+        #
+        #  Run the deck WITHOUT connectivity -- `run_drc.py --no_connectivity`,
+        #  which is a perfectly ordinary way to run it -- and it cannot know the
+        #  potentials, so it falls back to `nw_mv.isolated(1.7.um)` and flags
+        #  every pair. Measured: 3 per clamp, 33 over the eleven on the top,
+        #  against 0 with connectivity on. The layout was right and the report
+        #  was right; they were answering different questions.
+        #
+        #  A design that passes only in one mode is a design that depends on how
+        #  someone else runs the check. `NW.2a_MV` states the remedy in its own
+        #  text -- "Merge if the space is less than" -- so the wells are merged.
+        #  Electrically nothing changes: they were already one node. The cell
+        #  does not grow either, since this only fills the gaps that were
+        #  already inside its outline.
+        if kind == "pd2nw" and nw_x0 is not None:
+            box(c, L["nwell"], nw_x0, y - NWELL_PCOMP,
+                nw_x1, y + D_LA + NWELL_PCOMP)
 
     #  The bar that ties the four main comps together. It runs in the gap
     #  between the rows, clear of the n+ implant below (which stops at

@@ -133,3 +133,49 @@ Everything else in the deck is clean. The eleven are the **pin escape channels**
 drawn by `integrate_top.tcl`, not the fill and not the ESD — `mslot1_local`
 finds them identically on the filled and the unfilled GDS. See
 `HANDOFF.md` §5, *THE ONE THING TO DO NEXT*.
+
+---
+
+## The other axis nobody was running: connectivity
+
+`DRC_MODE` is not the only switch that changes the answer. The deck also asks
+whether it may use the **connectivity** extraction, and on this design that
+decides whether a rule passes or fails.
+
+Found on 2026-09-01, by the user running the deck by hand from the KLayout GUI
+and getting **33 `NW.2b_MV`** on a file this flow had just called clean.
+
+Both answers were right. They are different rules:
+
+```ruby
+# with connectivity -- what run_drc.py does by default, and what this flow runs:
+nw2b_l1 = unconnected_nwell_5p0v.overlapping(dualgate)   # only wells REALLY apart
+
+# without it -- the deck's own "CONNECTIVITY_RULES disabled" branch:
+nw2b_l1 = nw_mv.isolated(1.7.um, euclidian)              # ANY well within 1.7 um
+```
+
+`NW.2b_MV` is *Min. Nwell Space **[Different potential]***, 1.7 um. Its
+equipotential twin `NW.2a_MV` asks only 0.74 um. Which of the two applies
+depends on knowing the potentials — and without connectivity the deck cannot
+know, so it assumes the worst and flags every neighbour.
+
+**The design was passing in one mode and failing in the other, and that is not
+a property you want.** Whoever reviews the chip picks the mode, not you: the
+chipathon asks for full-chip DRC and the fast way to run it is without
+connectivity. The eleven ESD clamps each drew four separate n-wells 1.330 um
+apart — all four the same node, `VDD`, the `m=4` of one device — so
+`esd_layout.py` now draws **one** well under the row. `NW.2a_MV` states the
+remedy in its own text: *"Merge if the space is less than"*. The cell did not
+grow, the LEF is unchanged, and the top now reads 0 in **both** modes.
+
+**So run both.** The verdict run stays `main`/deep with connectivity, but a
+sign-off is not finished until this has also been run:
+
+    python3 $PDK_ROOT/gf180mcuD/libs.tech/klayout/tech/drc/run_drc.py \
+        --path=<gds> --variant=D --topcell=B26_A --run_dir=<dir> \
+        --run_mode=deep --thr=4 --mp=1 --no_connectivity
+
+On the filled top it takes about 70 seconds, so there is no excuse for skipping
+it. A "clean" that only holds under one set of switches is a clean with a
+footnote, and nobody reads the footnote.

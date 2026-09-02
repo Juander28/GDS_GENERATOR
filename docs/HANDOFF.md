@@ -153,6 +153,28 @@ WSL2/drvfs is case-insensitive). `layouts_v2/` is genuinely separate.
   the rule, so a crashed table still gets an answer. It had a unit bug of its
   own — it read database units as nanometres and so measured 15 um where the
   rule says 30. Fixed by taking `um()` from `ly.dbu`.
+* **The deck has a SECOND switch that changes the verdict: connectivity.**
+  `NW.2b_MV` is *Min. Nwell Space [Different potential]*, 1.7 um; its
+  equipotential twin `NW.2a_MV` asks 0.74 um. Which applies depends on knowing
+  the potentials, so **without connectivity the deck assumes the worst and
+  flags every neighbouring well**. Measured 2026-09-01: the same
+  `B26_A_filled3.gds` gave **0** with connectivity and **33 `NW.2b_MV`**
+  without it. The eleven clamps each drew four separate n-wells 1.330 um apart
+  — all of them `VDD`, the `m=4` of one device — and `esd_layout.py` now draws
+  **one** well under the row, which is what `NW.2a_MV` tells you to do
+  (*"Merge if the space is less than"*). The cell did not grow and the LEF is
+  unchanged. **A sign-off now runs both modes**; the `--no_connectivity` pass
+  costs 70 seconds on the filled top. See [`drc-full-deck.md`](drc-full-deck.md).
+
+* **`layouts/` is not what the top reads — `layouts_v2/` is.**
+  `esd_layout.py` writes to `layouts/ESD_CDM/`, while `openroad/gds/ESD_CDM.gds`
+  is a symlink that `usar_version.sh v2` points at `layouts_v2/ESD_CDM/`. So a
+  regenerated block changes nothing on the top until it is copied across. This
+  cost a whole integration cycle plus a 17-minute density fill: the clamp was
+  verified clean, the top rebuilt, and the DRC still reported the same 33.
+  **The block being clean is not the same as the top using it.** Check with
+  `sha256sum $(readlink -f openroad/gds/ESD_CDM.gds)`.
+
 * **exit 137 is SIGKILL is out of memory.** Docker on native Linux imposes no
   memory or CPU cap of its own (the cgroup reads `max`); on WSL2 the cap is
   whatever the VM was given in `%UserProfile%\.wslconfig`. If a DRC dies at
@@ -281,12 +303,13 @@ Measured 2026-09-01. **The deliverable is clean; nothing has to be rebuilt.**
 | `ESD_CDM` | **built, clean** | `layouts_v2/ESD_CDM/lvs/RESUMEN.txt` |
 | `OPAM_SUMA` | **broken, and left broken on purpose** — `GRADIENT_NAV2` does not use it | same file |
 | `GRADIENT_NAV2` | **rebuilt**, 460.90 x 386.99 um, netgen `Circuits match uniquely` | `out_v2_GRADIENT_NAV2/` |
-| **`B26_A_filled3.gds`** — THE DELIVERABLE | the pointer as of 2026-09-01; byte-identical to `_filled2` and `_filled`, sha `95ebcf92…`. Archived under `integration/gds/`, and its DRC is filed under its own name (`out/drc_B26_A_FILLED3`) | `lvs_config.json -> LAYOUT_FILE`, `info.yaml` |
-| — sign-off DRC, **`main`/deep**, on the filled file | **660 rule categories, 0 items** — the first time the submitted file has been through the whole deck, `mslot` included. (Re-counted 2026-09-01: the file declares 660, not the 253 written here and in the archive's `NOTAS.txt`. What decides is the 0 items and `MSLOT.1` being among the categories — the count is descriptive.) | `out/drc_B26_A_FILLED/B26_A_filled_main.lyrdb` |
+| **`B26_A_filled3.gds`** — THE DELIVERABLE | rebuilt 2026-09-02 with the merged clamp n-wells, sha `41bef27a…` (it is **no longer** byte-identical to `_filled2`/`_filled`, which were `95ebcf92…`). Archived under `integration/gds/`, DRC filed under its own name | `lvs_config.json -> LAYOUT_FILE`, `info.yaml` |
+| — sign-off DRC, **`main`/deep**, with connectivity | **660 rule categories, 0 items**, with `MSLOT.1` and `NW.2b_MV` both among them, so both really ran | `out/drc_B26_A_FILLED/B26_A_filled_main.lyrdb` |
 | — density pass | clean | `out/density_B26_A_FILLED` |
 | — `MSLOT.1` | **0** (was 11) | `drc_klayout.mslot1_local` |
 | — `PR_bndry` | **1** | `def_to_gds.una_sola_frontera()` |
 | — LVS netgen | **`Circuits match uniquely`** | `out_integration/lvs_netgen_B26_A.rpt` |
+| — sign-off DRC, **`--no_connectivity`** | **0 items** (was 33 `NW.2b_MV` before the clamp fix). The deck passes in BOTH modes now | `out/verif_sinconn_full` |
 | — `check_integration.py` | **17 / 17**, 11 through their clamp | script output |
 | — current density | 48.00 um of section against 22.10 required | `check_current_density.py` |
 | — LVS KLayout | **does not match, and it is not the circuit** | [`lvs-klayout-top.md`](lvs-klayout-top.md) |

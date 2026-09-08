@@ -47,6 +47,10 @@ diseno() {
     #  esperando una respuesta que nadie teclea. Y `cp -a`, no `rsync --delete`:
     #  FINAL/ se ACTUALIZA, no se recrea.
     /bin/cp -a "$ARBOL/." "$DISENO/FINAL/"
+    #  Y fuera los ficheros de bloqueo que deja abierta una presentacion.
+    #  `cp -a` los copia como cualquier otro y uno se colo en el commit
+    #  c4c8610: 165 bytes de basura en el repositorio del diseño.
+    find "$DISENO/FINAL" \( -name '~$*' -o -name '.~lock.*' \) -delete
 
     #  Los enlaces de spice_blocks/ se guardan RELATIVOS en el repo; `cp -a` los
     #  trae absolutos a /foss/designs/... y en el clon de otra persona no

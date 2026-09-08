@@ -203,11 +203,22 @@ def main() -> int:
     patron = re.compile(r"`((?:openroad/|scripts/|XSCHEM[^`]*?/|layouts_v2/|docs/|"
                         r"reportes/|integration/)[A-Za-z0-9_./-]+"
                         r"\.(?:py|tcl|sh|md|json|yaml|def|gds|lef|spice|sch|sym|txt))`")
+    #  `README_GDS_GENERATOR.md` describe el OTRO repositorio, no este arbol:
+    #  alli la documentacion vive en `docs/` -- `subir.sh` la copia ahi-- y en
+    #  el arbol de trabajo `HANDOFF.md` esta en la raiz. Sus rutas son
+    #  relativas a aquel, asi que se cotejan contra el clon de las
+    #  herramientas si existe, y si no se dejan pasar. Marcarlas como rotas
+    #  seria pedirle a ese fichero que mintiera sobre su propio repositorio.
+    GEN = Path.home() / "Documents/DOCKER2026/repos/gen"
     faltan: dict[str, set] = {}
     for doc in DOCS:
+        otro = doc.name == "README_GDS_GENERATOR.md"
+        bases = (GEN,) if otro and GEN.is_dir() else (PROY, ROOT, PROY.parent)
+        if otro and not GEN.is_dir():
+            continue
         for m in patron.finditer(doc.read_text(errors="replace")):
             r = m.group(1)
-            for base in (PROY, ROOT, PROY.parent):
+            for base in bases:
                 if (base / r).exists():
                     break
             else:

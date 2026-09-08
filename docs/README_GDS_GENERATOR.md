@@ -5,10 +5,15 @@ kept apart from the design itself. The design — schematics, layouts, netlists,
 GDS — lives in `AnBuiUCI/sscs-2026-zotnetic` under `FINAL/`. **This repository is
 what builds it, and everything worth knowing about how.**
 
-If you are picking this work up cold, read **[`docs/HANDOFF.md`](docs/HANDOFF.md)**
-first. It is written for exactly that: what the chip is, where every tree lives,
-the state of every block with the evidence for it, the one thing to do next, and
-every fact in this flow that cost a full build to learn.
+If you are picking this work up cold, read
+**[`docs/HANDOFF.md`](docs/HANDOFF.md)** first. It is written for exactly that:
+what the chip is, where every tree lives, the state of every block with the
+evidence for it, the one thing to do next, and every fact in this flow that cost
+a full build to learn. (In the working tree that file sits at the root,
+`a_zonetic2026/HANDOFF.md`; `scripts/subir.sh` copies it here into `docs/`.
+There used to be a second, older copy at `docs/HANDOFF.md` in the working tree
+and it was deleted on 2026-09-08: it had drifted eleven sections behind and
+still named the previous deliverable.)
 
 ## What is here
 
@@ -16,7 +21,7 @@ every fact in this flow that cost a full build to learn.
 |---|---|
 | `zotnetic_layout/` | the **analog layout generator**. Reads a SPICE netlist and draws the cell: placement, abutment, routing, MIM capacitors, poly resistors. `build_block.py` is the entry point. |
 | `flow_scripts/` | the **OpenROAD flow** of the top level: collateral, floorplan, route, DEF-to-GDS, decoupling fill, density fill, DRC and LVS drivers, padring integration, the ESD clamp generator (`esd_layout.py`) and the electromigration check (`check_current_density.py`). A copy of `FINAL/openroad/scripts/` plus its `Makefile`, so the flow can be read without the design tree. |
-| `docs/` | the knowledge. **[`moving-machine.md`](docs/moving-machine.md) if you are setting this up somewhere new** — the container, what to copy, and the virtualenv that does not survive a container update. `HANDOFF.md` (start here), `drc-full-deck.md` (**how to run the sign-off DRC so that it actually runs** — read it before believing a clean), `lvs-klayout-top.md` (**why the KLayout LVS does not match on the top while netgen does** — read it before believing it is broken), `openroad-flow.md` (the long logbook of the top level), `xschem-v2.md`, `top-functionality.md`. `zotnetic_layout/DRC_KLAYOUT.md` covers the block-level DRC. |
+| `docs/` | the knowledge. **[`moving-machine.md`](docs/moving-machine.md) if you are setting this up somewhere new** — the container, what to copy, and the virtualenv that does not survive a container update. `HANDOFF.md` (start here), `drc-full-deck.md` (**how to run the sign-off DRC so that it actually runs** — read it before believing a clean), `lvs-klayout-top.md` (**why the KLayout LVS does not match on the top while netgen does** — read it before believing it is broken), `openroad-flow.md` (the long logbook of the top level), `xschem-v2.md`, `top-functionality.md`, `repositorios.md` (**the two repositories and what goes in each**). `zotnetic_layout/DRC_KLAYOUT.md` covers the block-level DRC. |
 
 ## How to run the generator
 
@@ -50,7 +55,7 @@ Every one of these has produced a **false clean** in this project.
   organisers from regenerating this team's DEF. `def_to_gds.py` now refuses to
   write a GDS with more than one.
 
-`docs/HANDOFF.md` §3 has the rest, each one paid for with a build.
+`HANDOFF.md` §3 has the rest, each one paid for with a build.
 
 ## What is deliberately not here
 

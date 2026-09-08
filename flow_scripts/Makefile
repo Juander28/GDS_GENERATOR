@@ -38,6 +38,14 @@
 #  todas puedan coexistir y compararse.
 V ?= v1
 T ?= GRADIENT_NAV
+#  Where the top's schematic lives. `GRADIENT_NAV2_V3` is the port-reordering
+#  experiment and sits in its own tree, so the netlist step has to be told:
+#
+#      make top T=GRADIENT_NAV2_V3 V=v2 SCHDIR=../XSCHEM_v3
+#
+#  Everything downstream keys off T alone, so the output still lands in
+#  out_v2_GRADIENT_NAV2_V3/ without any further argument.
+SCHDIR ?= ../XSCHEM
 BASEDIR := $(if $(filter v2,$(V)),out_v2,out)
 OUTDIR  := $(if $(filter GRADIENT_NAV,$(T)),$(BASEDIR),$(BASEDIR)_$(T))
 export TOP_OUT  = $(OUTDIR)
@@ -65,18 +73,18 @@ top: verilog collateral floorplan route gds fill lvs-ref
 #  xschem sometimes returns code 10 with the file perfectly written, so the
 #  verdict is the file's DATE, not its exit code.
 netlist:
-	@cd ../XSCHEM && 	  rm -f simulation/$(T).sch/$(T).spice && 	  xschem -n -s -q -o simulation/$(T).sch $(T).sch >/dev/null 2>&1; 	  test -s simulation/$(T).sch/$(T).spice 	    || { echo "  ERROR: xschem did not regenerate simulation/$(T).sch/$(T).spice"; exit 1; }
-	@echo "  netlist: ../XSCHEM/simulation/$(T).sch/$(T).spice"
+	@cd $(SCHDIR) && 	  rm -f simulation/$(T).sch/$(T).spice && 	  xschem -n -s -q -o simulation/$(T).sch $(T).sch >/dev/null 2>&1; 	  test -s simulation/$(T).sch/$(T).spice 	    || { echo "  ERROR: xschem did not regenerate simulation/$(T).sch/$(T).spice"; exit 1; }
+	@echo "  netlist: $(SCHDIR)/simulation/$(T).sch/$(T).spice"
 
 #  The decoupling fill: drops transistors into the gaps between macros and
 #  writes into the schematic the block with those SAME transistors, so that LVS
 #  matches by construction. Runs AFTER the GDS and before the density fill.
 #  densidad.
 decap:
-	$(KPYTHON) scripts/decap_fill.py $(ARGS)
+	SCHDIR_ABS=$$(cd $(SCHDIR) && pwd) $(KPYTHON) scripts/decap_fill.py $(ARGS)
 
 verilog: netlist
-	$(PYTHON) scripts/spice_to_verilog.py
+	SCHDIR_ABS=$$(cd $(SCHDIR) && pwd) $(PYTHON) scripts/spice_to_verilog.py
 
 collateral:
 	./scripts/usar_version.sh $(V)
@@ -132,7 +140,7 @@ drc-magic:
 	$(PYTHON) scripts/drc_magic.py $(ARGS)
 
 lvs:
-	$(PYTHON) scripts/lvs_netgen.py $(ARGS)
+	SCHDIR_ABS=$$(cd $(SCHDIR) && pwd) $(PYTHON) scripts/lvs_netgen.py $(ARGS)
 
 lvs-klayout:
 	$(PYTHON) scripts/lvs_klayout.py $(ARGS)

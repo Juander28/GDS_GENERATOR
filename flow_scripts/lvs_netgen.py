@@ -343,7 +343,10 @@ def main() -> int:
             sufijo = {"_DECAP": "_decap", "_FILLED": "_filled"}.get(
                 name[len(TOP):], "")
             layout = extract_top(ROOT / "work_lvs", OUT / f"{TOP}{sufijo}.gds")
-            ref = PROJECT / f"XSCHEM/simulation/{TOP}.sch/{TOP}.spice"
+            #  El top puede vivir fuera de XSCHEM/: `GRADIENT_NAV2_V3` esta
+            #  en su propio arbol. El Makefile lo pasa como SCHDIR_ABS.
+            _sch = Path(os.environ.get("SCHDIR_ABS", PROJECT / "XSCHEM"))
+            ref = _sch / f"simulation/{TOP}.sch/{TOP}.spice"
             name = TOP
         else:
             layout, ref = block_pair(name)

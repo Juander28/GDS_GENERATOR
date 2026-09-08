@@ -15,9 +15,17 @@ GF180MCU-D analog IC for the SSCS Chipathon 2026, team **B26 Zotnetic**.
 
 Four magnetoresistive bridges sample the **magnitude** of the magnetic field,
 `|B|`, at the vertices of a tetrahedron. The chip reconstructs `grad|B|` — which
-points towards where the magnitude grows, i.e. **towards the source** — and puts
-out a sign per axis. The sensors do not measure a vector; they measure `|B|`.
-That distinction is the whole design.
+points towards where the magnitude grows, i.e. **towards the source** — and
+names **which axis** that is. The sensors do not measure a vector; they measure
+`|B|`. That distinction is the whole design.
+
+**It does NOT put out a sign per axis.** This line said so until 2026-09-04 and
+it was wrong. The six digital pins are three decisions and their complements:
+`COMP_OUT` is `OUT = buffer(IN)`, `OUT_N = NOT(IN)`, instantiated in
+`GRADIENT_NAV2.sch` as `x8 VDD XN X XP VSS COMP_OUT`, so `XN` is exactly
+`NOT(XP)`. `XP` high means *this axis won the vote*; `XN` is there to drive the
+other side of an H-bridge. Telling `+X` from `−X` needs a further comparison —
+that is what `GRADIENT_NAV3` does, and it is not instantiated on this die.
 
 Top cell: **`GRADIENT_NAV2`**. Integrated into the padring's user area as
 **`B26_A`** (1110 x 1110 um).
@@ -62,6 +70,116 @@ WSL2/drvfs is case-insensitive). `layouts_v2/` is genuinely separate.
 
 * Do **not move** the `.py` generators. Editing them in place is fine and is how
   the flow evolves; moving them breaks every relative path in the Makefile.
+
+### `wrdata` writes no header, so a short name list slides silently
+
+`XSCHEM/TEST/figuras.py` names its columns by position:
+
+    CELDAS = ["OPAMt", "OPAM_G100A", "OPAM_G100B", "OPAM_LIN"]
+    RAMAS  = ["schematic", "extracted layout"]
+
+Every one of those benches has since grown a THIRD variant -- schematic, v1
+layout, **v2 layout**, and v2 is what is on the die. `test_comp_dc.sch` now
+writes 6 vectors where the list names 4; `test_opam_g100_dc.sch` writes 12
+where it names 8. `wrdata` emits no header, so nothing fails: the names just
+slide onto the wrong columns.
+
+What that produces today, if `figuras.py` is re-run:
+
+* the COMP power plot reads `v(OUT2)` -- a VOLTAGE -- as the schematic power,
+  and prints ~2500 mW for a 3 mW block;
+* the WEIGHT figure's "OUT_N schematic" curve is really the v2 layout's `OUT`;
+* the amplifier's `P_OPAM_LIN` is actually OPAM_G100A's supply;
+* DECODER and WEIGHT compare against the **v1** layout, not the v2 that ships.
+
+The PNGs saved beside those benches predate the third variant, so they look
+right and are stale. **`figuras.py` has not been touched** -- its outputs feed
+`doc/opam_g100.pdf` too, and rerunning it would replace good PNGs with wrong
+ones. The report does not use them: `reportes/figuras_bloques.py` reads the raw
+data with the vector order taken from each bench's own `wrdata` line, and
+refuses to load a file whose column count does not match its name list. That
+check is the fix; the name lists in `figuras.py` still need the same treatment.
+
+Found 2026-09-02, while building the per-block figures for the report.
+
+### `test_weight.sch` probes the layout branches out of order
+
+Its `wrdata current.txt` line says, in its own comment, "first the four
+schematic ones and then the four layout ones, **in the same VA VB VC VD
+order**". The layout half is not in that order:
+
+    i(v.x1.Vmeas) i(v.x1.Vmeas1) i(v.x1.Vmeas2) i(v.x1.Vmeas3)
+    + @m.xextrc.x31.m0[id] @m.xextrc.x16.m0[id]
+    + @m.xextrc.x23.m0[id] @m.xextrc.x24.m0[id]
+
+`x16` and `x23` are the other way round, so the layout series read VA, **VC,
+VB**, VD. Cross-comparing every layout branch against every schematic one, in
+µA, leaves no doubt:
+
+            esq_VA   esq_VB   esq_VC   esq_VD
+    lay_VA    0.46   171.82   171.82   171.82
+    lay_VB  171.82   171.82     0.44   171.82
+    lay_VC  171.82     0.52   171.82   171.82
+    lay_VD  171.82   171.82   171.82     0.84
+
+**It is the probe, not the circuit.** Read in the true order the four branches
+agree to within a microamp, and the WE sum node matches between schematic and
+layout, as does the whole navigator across its sweep.
+
+(An earlier version of this paragraph argued the point by saying a real VB/VC
+swap would change the weighted sum, because the branches were believed to be
+binary weighted ×8 ×4 ×2 ×1. They are not — see the next section. That does not
+change the conclusion, which rests on the cross-comparison table above, but the
+reasoning was wrong and swapping two branches of a majority counter would in
+fact change nothing at the sum node.)
+
+It stayed hidden because the figure drew the schematic in one panel and the
+layout in another; nobody compares branch to branch across two axes. Splitting
+it into one panel per branch, which is what the report now does, made it
+obvious on sight. `reportes/figuras_bloques.py` carries the corrected order and
+the evidence; **the `.sch` itself is untouched** and still needs the two device
+names swapped, or its comment corrected.
+
+Found 2026-09-03.
+
+### WEIGHT is not binary weighted: it is a plain majority counter
+
+Its own bench titles say "the four binary-weighted inputs", `bloques.py` said
+so, and the block diagram drew ×8 ×4 ×2 ×1. The data says otherwise, and says
+it cleanly. Grouping `test_weight.sch` by the weighted sum a 1-2-4-8 reading
+would give:
+
+    sum   3      5      6      9     10     12      ->  WE = 2.166 .. 2.173 V
+    sum   7     11     13     14             ->  WE = 1.802 .. 1.810 V
+
+Six different "weights" land on the same WE within 10 mV, and four more do the
+same one step down. WE depends only on HOW MANY branches are high. The branch
+currents confirm it: all four carry the same ~170 µA, not 1:2:4:8.
+
+So the transfer is a staircase in the COUNT -- 3.006 V at none, then 2.563,
+2.168, 1.808, 1.488 -- about 0.38 V per vote, and **the output flips at 3 of
+4**. It is majority rule. At the top level the same staircase reads 611 mV per
+vote on X and Y but 401 mV on Z; that asymmetry is the same one that made Z
+unable to win until the order inside each triple was changed.
+
+Found 2026-09-03, by drawing the four branch currents one per panel instead of
+schematic-in-one-panel / layout-in-another. Corrected in `reportes/`; the
+`.sch` titles still claim binary weighting.
+
+### A DC sweep of the field must not start at zero
+
+`test_GRADIENT.sch` gained two sweeps that hold the direction and sweep `Vamp`.
+Started at exactly 0 they spend the run in gmin stepping and never finish: with
+no field the three bridges are identical, so the three amplifiers sit at the
+same output and all three comparators land exactly on their trip point. The
+operating point is not unique. Starting one step in (20 µV wide, 1 µV fine)
+costs nothing and converges.
+
+And read the result carefully: the DC sweep decides correctly at every point,
+down to 1 ppm. That is not a sensitivity -- **a `dc` analysis carries no
+noise**. The floor is the amplifier's own 222 µVrms input-referred noise over
+its 338 kHz bandwidth, which against 5 V of excitation is **44.4 ppm of dR/R**.
+That is why the bench's fine window sits at 50 ppm.
 
 ### Resistors
 
@@ -419,6 +537,14 @@ breaking a cell on purpose and checking that the check fails.
 * **Language: everything produced is in English** — code, comments, docstrings,
   names, commit messages, config, figure labels. Two exceptions, both Spanish:
   **chat replies** and **PDFs/documents delivered to the user**.
+* **Everything delivered out of `reportes/` ships with a `.txt` of the same
+  name beside it**, explaining **in Spanish** what each slide is there to say
+  and what to point at while it is on screen — for the English deck too, since
+  whoever presents it is the same person. Asked for on 2026-09-02. It is
+  generated by the same pass that builds the deck (`guion.py` hooks
+  `estilo.OBSERVADOR`, and refuses to write the file if a slide has no line),
+  never written afterwards by hand: a narration numbered one slide off is worse
+  than no narration.
 * **Never read the SPICE on disk; always re-export from xschem.**
 * **Do not move the `.py` generators.** Editing in place is fine.
 * **Nothing is deleted from the repository without asking first.**
@@ -436,6 +562,9 @@ breaking a cell on purpose and checking that the check fails.
 ---
 
 ## 9. How to upload
+
+Las dos URL, con qué va en cada repositorio y las trampas de cada subida,
+están juntas en [`docs/repositorios.md`](docs/repositorios.md).
 
 The repository is **`git@github.com:AnBuiUCI/sscs-2026-zotnetic.git`**, shared
 with the team (`main`, `add-pads`, `glayout`). This machine's SSH key
@@ -488,7 +617,7 @@ Verify by cloning into a clean directory, not by looking at the working copy:
 ```bash
 git clone git@github.com:AnBuiUCI/sscs-2026-zotnetic.git verify
 cd verify && find FINAL -type l -lname '/*'
-python3 -c "print(open('FINAL/openroad/out_integration/B26_A_filled3.gds','rb').read(4).hex())"
+python3 -c "print(open('FINAL/openroad/out_integration/B26_A_filled4.gds','rb').read(4).hex())"
 # 00060002 = valid GDSII header
 ```
 
@@ -523,3 +652,306 @@ circuit. The deliverables live in the design repository.
 LFS is not needed: the largest file is `B26_A_filled.gds` at ~42 MB, under
 GitHub's 100 MB limit. `FINAL/.gitattributes` declares `*.gds binary` so that
 line-ending normalisation cannot corrupt a GDS.
+
+---
+
+## 10. Findings from the 2026-09-04 report pass
+
+### The benches were older than the schematic, and two of them were wrong
+
+`GRADIENT_NAV2.sch` is dated 2026-09-02. `datos_nav2` was 2026-08-22 and
+`datos_geo` / `datos_fuente` 2026-08-26, so **every system-level number in the
+report described an older revision of the top**. Two changes landed in between:
+
+* the sensor split became the **four rotations** `(1,2,3) (4,1,2) (3,4,1)
+  (2,3,4)` — every slot sees each sensor exactly once — where it had been two
+  pairs sharing two legs, `(1,2,3) (1,2,4) (3,4,1) (3,4,2)`;
+* `XP` and `XN` were swapped to their correct polarity.
+
+`test_NAV2.sch`'s hand-rebuilt navigator had **neither** fix, so
+`comprobar_nav2.py` was scoring one wiring against the other's and the
+layout-against-schematic comparison was between two different circuits. Both are
+fixed now and the checker passes: *the rebuilt navigator is the SAME circuit as
+the schematic (31 cells)*. `docs/top-functionality.md` §4/§6,
+`XSCHEM_v2/README.md` and the comment at `analizar_caja.py:90` still describe
+the old split as current — they are stale, the code itself reads the wiring from
+the netlist and is fine.
+
+### The comparator slews; the amplifier does not
+
+`COMP`: **6.3 V/µs rising and falling**, and it is a real slew rate because the
+slope is constant to within a percent across the whole 601 ns edge. Anything
+computed with `np.gradient` on this file gives ~38 V/µs — that is an artefact of
+the non-uniform time step at the edges, not the circuit.
+
+`OPAM_LIN`: **not slew limited at 2 V.** Its edge (102 V/µs schematic, 562 V/µs
+layout) is at or above the 456 V/µs that the 36.3 MHz unity-gain crossing would
+give on its own, so nothing is holding the output back and there is no slew rate
+to quote. Measuring it needed a dedicated analysis — `tran 20p 2.2u 1.95u 20p`
+with a 2 V step, added to `test_opam_g100_tran.sch` writing `slew.txt`. The
+original `tran 2n 20u` lands thirteen samples on a 10 ns edge and a slope taken
+from two of them is not reproducible.
+
+### The axis is claimed from THREE votes of four, not two
+
+Measured over all 48 cases of `umbral_WEIGHT_COMP` — sixteen input combinations
+× three temperatures, each swept over VDD 4.5–5.5 V — `WE` falls **389 mV per
+vote** (3.043, 2.584, 2.180, 1.815, 1.489 V) and `OUT` flips **between 2 and 3**
+in all nine corners without exception. The comment at `WEIGHT.sch:8-17` says the
+always-on fifth branch moved the trip to *"an axis wins from TWO votes on"*.
+It did not. Requiring 3 of 4 is demanding and is part of why the navigator's
+octant hit rate is what it is.
+
+### Where the sensing block actually fails
+
+Driving the three bridge readings independently (the new `v(sel) = 1` mode in
+`test_GRADIENT.sch`, 24 cases = 8 sign patterns × 3 magnitude orderings), the
+decoder returns `argmin(bx, by, bz)` **in all eight octants, 100 %, up to
+dR/R = 1.40 %**. Above that it falls, and the mechanism is visible in the data:
+that is where **two amplifiers saturate against the same rail**, at which point
+the ordering between them is gone before any comparator sees it and the decision
+is left to offset. The layout scoring higher there is not a better layout — its
+larger offset happens to break the tie the right way.
+
+### The source figure and its own caption disagreed
+
+`figuras_fuente_rep.py` titled each panel with `mean(|chip − perfect|)` while
+`textos.py` quoted `mean(chip) − mean(perfect)` weighted by `|sin(ang)|` — 0.58°
+against 0.25° at 3 mm, on the same slide. The signed weighted form is the right
+one (the absolute value counts a sample where the chip lands *closer* than the
+ideal as if it were error) and both now use it.
+
+And the number that matters there is neither: a **perfect** chip already misses
+by 14° at 3 mm, because the chip does not measure a gradient at a point — it
+takes a finite difference over a 1 mm box, and the field curves sharply across
+it. Only the difference between the two curves belongs to the circuit.
+
+### The `_V2_` extracted copies had been stale for weeks — RESOLVED
+
+This one produced two wrong conclusions in a row and is worth reading in full.
+
+`XSCHEM/TEST/preparar_extraidos.sh` makes the `<BLOCK>_V2_*.spice` copies the
+system benches include: it renames the subcircuit so v1 and v2 can live in one
+netlist, and normalises the port order to v1's. It takes that order from
+`$V1/<BLOCK>/mag/<BLOCK>_<suffix>.spice`, with
+
+    V1=/foss/designs/a_zonetic2026/layouts     # lowercase
+
+**On this machine `layouts/` and `Layouts/` are two different directories**
+(inodes 12597222 and 12583050). `layouts/` holds only `ESD_CDM`; every v1 block
+is in `Layouts/`. §2 of this file says they are the same inode, which was true
+on WSL2/drvfs and is **not** true here. So every lookup failed, the script
+aborted with `12 file(s) not prepared`, and the `_V2_` copies silently stayed at
+whatever they were the last time it worked — **2026-08-26 16:11**, before the
+fifth WEIGHT branch went in on 08-26 23:54 and before the 08-29 layout rebuild.
+
+The benches were therefore simulating a `WEIGHT_COMP` with four branches while
+the schematic, the layout and the GDS all had five. Fixed by pointing `V1` at
+`Layouts`. Verified on the gate nets of the w=2.48u branch devices:
+
+    WEIGHT_COMP_pex_rc.spice     (29-ago, the real layout)   VA VB VC VD VDD
+    WEIGHT_COMP_V2_...  (26-ago, what the bench was reading)  VA VB VC VD
+
+**The GDS was never affected.** `openroad/gds/WEIGHT_COMP.gds` is a symlink to
+`layouts_v2/WEIGHT_COMP/WEIGHT_COMP_flat_gf180.gds` (2026-08-29 02:17), the
+five-branch version; `B26_A_filled3.gds` is 09-01 18:18; and the top LVS
+(`out_integration/lvs_netgen_B26_A.rpt`, 09-01 18:26) reports **Circuits match
+uniquely** over **1442 devices**, comparing the extracted layout against a
+reference derived from the schematic that has the fifth branch. A missing branch
+would be nine devices short and netgen would have said so.
+
+**What the two wrong conclusions were**, so neither gets repeated:
+
+1. *"The axis is claimed from THREE votes of four, and the schematic comment
+   saying two is wrong."* Backwards. `umbral_WEIGHT_COMP/u001.txt` was written
+   at 23:48 and `WEIGHT.sch` saved at **23:54** — the data was six minutes older
+   than the circuit. Re-run, the buffer flips **between 1 and 2 votes at all
+   fifteen VDD/temperature corners**, which is exactly what the fifth branch was
+   added to do. The comment was right.
+2. *"The layout navigator never trips its own threshold, cause unknown, OPEN."*
+   An artefact of the stale `_V2_` copy: a four-branch counter reads one step
+   high, never reaches the trip, and the pins sit at 75.6 / 49.9 / 73.5 %. With
+   the copies refreshed the six digital outputs agree on **99.45 %** (X, Y) and
+   **98.89 %** (Z), 2–4 degrees out of 360, and the disagreement sits on the
+   sector boundaries where the decision is on a knife edge. Chain outputs agree
+   on 99.72 %.
+
+**The lesson is the same one this file already records twice**: a stale input
+that still parses produces numbers, not errors. `preparar_extraidos.sh` printed
+its failure every single run and the benches ran anyway on whatever copies
+happened to be on disk. It should refuse to leave a `_V2_` file older than the
+extraction it derives from.
+
+
+### Los límites de electromigración SÍ están en el PDK, en los tech-LEF
+
+No en el DRC — ninguna regla los comprueba, y por eso hace falta
+`check_current_density.py`. Están declarados en, por ejemplo,
+`/foss/pdks/gf180mcuD/libs.ref/gf180mcu_fd_sc_mcu9t5v0/techlef/*__max.tlef`:
+
+```
+Metal1..Metal4   DCCURRENTDENSITY AVERAGE 0.67      (mA por µm de ancho)
+Metal5           DCCURRENTDENSITY AVERAGE 1.5
+Via1..Via4       DCCURRENTDENSITY AVERAGE 0.18      (mA por corte)
+```
+
+**Son idénticos en los tres corners: no dependen de la temperatura.** La tabla
+que traía `integrate_top.tcl` — «2.09 / 1.00 / 0.67 a 85 / 110 / 125 °C» —
+confunde los ejes: 1.00 y 0.67 son el valor **AC** y el **DC** de la misma capa,
+y 2.09 y 0.58 no aparecen en ningún sitio del PDK. El «Integration README» que
+cita como fuente no está en disco. Por suerte el número que acabó usándose (0.67
+DC) es el correcto para una alimentación continua; el razonamiento no lo era.
+
+`check_current_density.py` ahora **los lee del tech-LEF** en vez de tenerlos
+escritos a mano.
+
+### Tres errores del chequeo de corriente, corregidos
+
+Ninguno era del layout:
+
+* **Sumaba micras de capas distintas contra un único límite.** Una micra de
+  Metal5 lleva 1.5 mA y una de Metal4 solo 0.67; sumarlas y compararlas con el
+  límite de Metal4 suspendía mallas que iban sobradas. Ahora suma **corriente**,
+  pesando cada tramo por el límite de su capa.
+* **`SIDE_UM = 1110.0` estaba cableado**, el lado del área de usuario. Sobre el
+  DEF de un bloque el corte caía fuera del die y devolvía ceros con cara de
+  fallo. Ahora lee `DIEAREA` del propio DEF, así que sirve para cualquier top.
+* **Aplicaba al bloque la anchura de señal que promete la integración.** Son dos
+  reglas distintas, `ANCHO` (0.38 µm) y `ANCHO_INT` (0.84 µm), y comparar la
+  primera contra la segunda suspendía dos capas que estaban bien.
+
+Y una cosa que no miraba y ahora sí: **cuántos cortes de vía hay**, leyendo el
+`ROWCOL` de cada definición del bloque `VIAS`. Contar instancias sin eso
+subestima por un factor de doce.
+
+### El layout de la v3: `openroad/out_v2_GRADIENT_NAV2_V3/`
+
+Prueba, no aceptada, fuera del die. Se construye con
+
+```
+make top T=GRADIENT_NAV2_V3 V=v2 SCHDIR=../XSCHEM_v3
+```
+
+`SCHDIR` es lo único que hubo que añadir al flujo: el esquemático de ese top
+vive en `XSCHEM_v3/`. El resto ya leía `TOP_CELL`. Dos generalizaciones que
+convenía hacer de todas formas:
+
+* `load_design.tcl` saltaba el LEF cuyo nombre coincidía con el top. Con más de
+  un top eso deja de valer: ahora salta **cualquier LEF sin su `.lib`**, que es
+  como se reconoce el abstracto de un top.
+* `spice_to_verilog.py`, `lvs_netgen.py` y `decap_fill.py` leen `SCHDIR_ABS`.
+
+Dimensionado al **doble del pico medido**, 31 mA (el bloque consume 14.97 mA de
+media y 15.50 de pico). Resultado, contra la misma medida sobre la v2, **en el
+peor corte de cada eje**:
+
+```
+                        v2 (el die)          v3          pide 31 mA
+Metal4 vertical VDD  24.0 um  16.1 mA   48.08 um 32.21 mA    v2 CORTO
+Metal4 vertical VSS  24.0 um  16.1 mA   46.89 um 31.42 mA    v2 CORTO
+Metal5 horiz.   VDD  24.0 um  36.0 mA   39.95 um 59.92 mA
+Metal5 horiz.   VSS  24.0 um  36.0 mA   78.14 um 117.21 mA
+pin del bloque VDD    3x3 um   4.5 mA   7 puertos 104.77 mA  v2 CORTO
+pin del bloque VSS    3x3 um   4.5 mA   4 puertos  58.61 mA  v2 CORTO
+vias Metal3-Metal4      612   110 mA    960-1130  173-203 mA
+vias Metal4-Metal5      832   150 mA   4704-5742  847-1034 mA
+puntos de contacto        1                  2 (peor caso)
+die                 460.90 x 386.99      460.90 x 386.99
+```
+
+DRC limpio (63 tablas, 0 items, con y sin desacoplo), LVS `Circuits match
+uniquely` en las dos pasadas — 1407 = 1407 sin desacoplo y 1409 = 1409 con él,
+883 nets las dos veces —, `route_drc.rpt` de 0 bytes.
+
+**Las filas van espejadas.** Las estanterías alternan `R0` y `MX`, así que cada
+canal lleva **un solo net**: los raíles abutan VDD contra VDD y VSS contra VSS,
+y en vez de una pareja VDD/VSS a 2 µm el canal lleva un strap dedicado de 10 µm.
+La separación entre nets contrarios pasa de 2 µm a 43.46 µm. Ningún canal lleva
+los dos nets. Abutición medida: 86.8 % en los dos canales de puro `OPAM`,
+62.6 % el peor canal interior (los que mezclan alturas sólo abutan con las
+celdas más altas).
+
+**Lo que descubrió el trabajo:** el pin de alimentación del bloque era un
+cuadrado de 3×3 µm de Metal5 — 4.5 mA para un bloque que pide 31 — porque el
+flujo bajaba al borde del die **un solo** strap. Y cada macro recibía **un solo
+punto de contacto**, con lo que su barra de Metal3 de 0.9 µm llevaba toda su
+corriente de punta a punta.
+
+**Y cuatro trampas, todas silenciosas, que sólo salieron al espejar:**
+
+* **`-offset` de `add_pdn_stripe` es el EJE del strap, no su borde izquierdo.**
+  Con 3 µm no se nota; con 8 el strap se sale media anchura, pisa la placa MIM
+  de al lado y pdngen lo parte. El floorplan informaba de 47 µm de VDD vertical
+  y por el die cruzaban 1.29. Y la comprobación de límites de pdngen **sí** usa
+  `offset + ancho`: coloca por el eje y comprueba por el borde.
+* **El `ORIGIN 1.260` del LEF.** odb NO se lo aplica a `getObstructions` pero
+  `getBBox` ya está colocado; sumar uno a otro corre todos los bloqueos de
+  Metal4 1.26 µm a la derecha. Afectaba a las bandas libres y al halo de los MIM.
+* **El halo de los MIM no espejaba**: con `MX` la placa está a `alto − y`.
+* **pdngen borra los tramos de strap donde no le pone vía, sin avisar.** Entre
+  dos canales del mismo net hay dos estanterías cuyos raíles son del otro, así
+  que el tramo del medio se queda sin ninguna vía y desaparece. `floorplan_top.tcl`
+  los **cose** después de `pdngen`, sólo las columnas que caen enteras en una
+  banda libre de bloqueo Metal4 a toda altura.
+
+**Y el propio comprobador estaba mal:** `check_current_density.py` cortaba el
+die en `max(ancho, alto) / 2`, que sobre un die rectangular no es el centro de
+ningún eje. Daba 30.15 mA de VSS vertical donde el peor corte real llevaba 16.
+Ahora barre el eje entero, dentro del vano de cada net, y reporta el peor corte
+con su posición.
+
+### Y la v3 ES el chip: `B26_A_filled4.gds`
+
+Desde el 2026-09-07 la integración lleva `GRADIENT_NAV2_V3` dentro.
+`lvs_config.json → LAYOUT_FILE` e `info.yaml` apuntan a
+`out_integration/B26_A_filled4.gds`; el `_filled3` de la v2 queda archivado en
+`integration/gds/2026-09-02_06/` con su sha `41bef27a…`.
+
+**La integración ya no tiene el macro a fuego.** Sale del entorno, como el resto
+del flujo:
+
+```
+MACRO=GRADIENT_NAV2_V3 MACRO_OUT=out_v2_GRADIENT_NAV2_V3 \
+    python3 scripts/integrate_padframe.py
+MACRO=GRADIENT_NAV2_V3 openroad -no_init -exit scripts/integrate_top.tcl
+```
+
+Lo leen `integrate_padframe.py`, `integrate_top.tcl`, `check_integration.py` y
+`lvs_reference_integration.py`. `macro_lef.py` pasó a `TOP_CELL`/`TOP_OUT`/
+`SCHDIR_ABS` como los demás. Y `XSCHEM/B26_A.sch` instancia
+`XSCHEM_v3/GRADIENT_NAV2_V3.sym`. Los dos bloques conviven: cuál entra lo dice
+`MACRO=`, no cuál de los dos enlaces de `gds/` exista.
+
+**Se destrabó el cuello que quedaba.** `integrate_top.tcl` alimentaba el bloque
+por **un solo** puerto —se quedaba con el de más a la izquierda—: 3 µm de Metal5,
+4.5 mA contra los 31 que consume. Ahora ata todos los que el abstracto expone:
+
+```
+block VSS: 4 puertos, 39.07 um -> 58.61 mA, 1066 via4 -> 191.88 mA
+block VDD: 3 puertos, 29.95 um -> 44.93 mA,  806 via4 -> 145.08 mA
+```
+
+Para que eso fuera posible, `macro_lef.py` escribe **un `PORT` por caja**: antes
+se quedaba con la última del DEF, que ni siquiera tenía por qué ser la que mejor
+le viene al bus.
+
+**Y un fallo de contabilidad que inflaba el informe.** `extend_all_to_edge`
+creaba la caja dentro del mismo `foreach` que recorría los hilos, así que el
+recorrido se encontraba lo que acababa de insertar y lo volvía a estirar: VDD
+salía con «7 puertos, 69.85 µm → 104.77 mA» de los que solo 3 eran distintos. Lo
+de verdad son 3 puertos y 29.95 µm → 44.92 mA. Sigue estando por encima de 31,
+pero el número que se publicaba no existía.
+
+| B26_A con la v3 | Resultado |
+|---|---|
+| DRC KLayout, split-table | **0 items**, 63 tablas |
+| DRC densidad | **limpio** |
+| LVS netgen | **`Circuits match uniquely`**, 1442 = 1442 dispositivos, 894 = 894 nets |
+| `check_integration.py` | **17/17** señales (11 por su clamp), **50/50** tie-offs |
+| Ruteo | `route_drc.rpt` de 0 bytes |
+| Densidad de corriente a 31 mA | los cuatro conductores, en el peor corte |
+| Relleno de densidad | las siete reglas, de 2–13 % a 31–42 % |
+
+**Lo que sigue pendiente:** nada de la alimentación. Queda el LVS de KLayout
+sobre el top, que no cuadra mientras netgen sí, y es el riesgo de entrega que ya
+estaba (ver `lvs-klayout-top.md`).

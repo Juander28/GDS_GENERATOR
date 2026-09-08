@@ -25,6 +25,7 @@ What has to come out:
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -172,11 +173,13 @@ def pines_macro():
     put it, both read from files rather than assumed.
     """
     top_def = ROOT / "out_integration" / "B26_A_routed.def"
-    blk_def = ROOT / "out_v2_GRADIENT_NAV2" / "GRADIENT_NAV2_routed.def"
-    m = re.search(r"^\s*- \S+ GRADIENT_NAV2 \+ \S+ \( (-?\d+) (-?\d+) \)",
+    macro = os.environ.get("MACRO", "GRADIENT_NAV2")
+    blk_def = (ROOT / os.environ.get("MACRO_OUT", f"out_v2_{macro}")
+               / f"{macro}_routed.def")
+    m = re.search(rf"^\s*- \S+ {re.escape(macro)} \+ \S+ \( (-?\d+) (-?\d+) \)",
                   top_def.read_text(), re.M)
     if not m:
-        sys.exit("  the integration DEF has no GRADIENT_NAV2 instance")
+        sys.exit(f"  the integration DEF has no {macro} instance")
     dbu_top = int(re.search(r"UNITS DISTANCE MICRONS (\d+)",
                             top_def.read_text()).group(1))
     ox, oy = int(m.group(1)) / dbu_top, int(m.group(2)) / dbu_top

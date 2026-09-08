@@ -78,11 +78,17 @@ TARGETS = {
     #  A copy under a new name is how this project marks a verified delivery --
     #  `_filled2` was the same act -- and each one needs its target here.
     f"{TOP}_FILLED3": OUT / f"{TOP}_filled3.gds",
+    #  Y el puntero de entrega actual: el area integrada con GRADIENT_NAV2_V3
+    #  dentro. Mismo motivo que `_FILLED3` para tener nombre propio -- la
+    #  evidencia se archiva bajo el nombre del fichero que se entrega, y sin
+    #  entrada aqui `archivar_integracion.py` dice `not run`.
+    f"{TOP}_FILLED4": OUT / f"{TOP}_filled4.gds",
 }
 
 
 #: The filled GDS keeps the cell name of the original.
-TOPCELL = {f"{TOP}_FILLED": TOP, f"{TOP}_FILLED3": TOP, f"{TOP}_DECAP": TOP}
+TOPCELL = {f"{TOP}_FILLED": TOP, f"{TOP}_FILLED3": TOP,
+           f"{TOP}_FILLED4": TOP, f"{TOP}_DECAP": TOP}
 
 
 def counts(run_dir: Path) -> collections.Counter:

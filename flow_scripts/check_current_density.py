@@ -57,21 +57,48 @@ ROOT = Path(__file__).resolve().parent.parent
 #: Corriente del bloque, medida sobre el layout extraido con parasitos.
 I_BLOQUE_MA = 14.81
 
-#: mA por um de ancho, por capa y temperatura (unidireccional).
-LIMITE_MA_UM = {85: {"Metal1": 2.09, "Metal2": 2.09, "Metal3": 2.09, "Metal4": 2.09},
-                110: {"Metal1": 1.00, "Metal2": 1.00, "Metal3": 1.00, "Metal4": 1.00},
-                125: {"Metal1": 0.67, "Metal2": 0.67, "Metal3": 0.67, "Metal4": 0.67}}
-#: Y mA por corte de via de 0.26 um.
-LIMITE_MA_VIA = {85: 0.58, 110: 0.28, 125: 0.18}
+#: LOS LIMITES SALEN DEL PDK, NO DE AQUI.
+#:
+#: Estan en los tech-LEF como `DCCURRENTDENSITY AVERAGE`, en mA por um de ancho
+#: para las capas de ruteo y en mA por corte para las de via. NO dependen de la
+#: temperatura: los tres corners (min/nom/max) traen los mismos numeros, y lo
+#: que se leia como "85 / 110 / 125 C" en la version anterior de este fichero
+#: eran en realidad AC y DC de la misma capa. El valor DC es el que vale para
+#: una alimentacion continua, y por suerte es el que se acabo usando.
+#:
+#: Ninguna regla del DRC comprueba esto. Por eso existe este script.
+TECHLEF = Path("/foss/pdks/gf180mcuD/libs.ref/gf180mcu_fd_sc_mcu9t5v0/"
+               "techlef/gf180mcu_fd_sc_mcu9t5v0__max.tlef")
 
-#: La temperatura a la que se dimensiona. La mas exigente.
-T = 125
 
-#: El lado del area de usuario, para cortarla por la mitad.
-SIDE_UM = 1110.0
+def limites_del_pdk(f: Path = TECHLEF):
+    """`DCCURRENTDENSITY AVERAGE` por capa, leido del tech-LEF."""
+    if not f.exists():
+        sys.exit(f"no encuentro el tech-LEF en {f}; sin el no hay limites que aplicar")
+    lim, capa = {}, None
+    for ln in f.read_text().splitlines():
+        s = ln.strip()
+        if s.startswith("LAYER "):
+            capa = s.split()[1]
+        elif s.startswith("DCCURRENTDENSITY AVERAGE") and capa:
+            lim[capa] = float(s.split()[2].rstrip(";"))
+    return lim
+
+
+LIMITES = limites_del_pdk()
+#: Las vias declaran su densidad por CORTE, no por micra.
+LIMITE_MA_VIA = LIMITES.get("Via4", 0.18)
+
+#: El lado por el que se corta el die. Se LEE del DEF (`DIEAREA`), no se cablea:
+#: con 1110.0 fijo, sobre el DEF de un bloque el corte caia fuera y el script
+#: devolvia ceros con cara de fallo.
 
 #: Ancho minimo que el flujo promete para una senal (`create_ndr ANCHO_INT`).
-MIN_SENAL = {"Metal2": 0.38, "Metal3": 0.84, "Metal4": 0.84}
+#: Cada nivel promete lo suyo, y son reglas DISTINTAS. `ANCHO` es la del
+#: bloque y `ANCHO_INT` la de la integracion; aplicarle al bloque la promesa de
+#: la integracion suspendia dos capas que estaban en su ancho correcto.
+MIN_SENAL = {"ANCHO":     {"Metal2": 0.38, "Metal3": 0.38, "Metal4": 0.38},
+             "ANCHO_INT": {"Metal2": 0.38, "Metal3": 0.84, "Metal4": 0.84}}
 
 
 def lee_def(path: Path):
@@ -122,10 +149,27 @@ def main() -> int:
         ROOT / "out_integration" / "B26_A_routed.def"
     if not d.exists():
         sys.exit(f"no hay DEF en {d}")
+    #  La corriente de dimensionado, por argumento. Sin el, la que trae el
+    #  fichero, que es la del navegador v1 y se ha quedado corta.
+    corriente = float(sys.argv[2]) if len(sys.argv) > 2 else I_BLOQUE_MA
     txt = d.read_text()
     u = float(re.search(r"UNITS DISTANCE MICRONS (\d+)", txt).group(1))
 
-    print(f"  {d.name}, a {T} C, con los {I_BLOQUE_MA} mA del bloque\n")
+    #  El die, del propio DEF.
+    da = re.search(r"DIEAREA\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)\s*"
+                   r"\(\s*(-?\d+)\s+(-?\d+)\s*\)", txt)
+    if not da:
+        sys.exit(f"{d.name}: no encuentro DIEAREA")
+    dw = (int(da.group(3)) - int(da.group(1))) / u
+    dh = (int(da.group(4)) - int(da.group(2))) / u
+    global SIDE_UM
+    SIDE_UM = max(dw, dh)
+
+    print(f"  {d.name}   die {dw:.2f} x {dh:.2f} um   dimensionado a "
+          f"{corriente:.2f} mA")
+    print(f"  limites del PDK (DC, del tech-LEF): "
+          f"Metal1-4 {LIMITES['Metal4']} mA/um, Metal5 {LIMITES['Metal5']}, "
+          f"vias {LIMITE_MA_VIA} mA/corte\n")
 
     #  --- los anillos de alimentacion --------------------------------------
     tr = tramos_special(txt, u)
@@ -147,23 +191,64 @@ def main() -> int:
     #  de donde viene la corriente, y el bloque, que es donde se consume. Asi
     #  que se corta el die por la mitad en cada eje y se suma el ancho de todo
     #  lo que lo atraviesa.
-    corte = SIDE_UM / 2.0
-    print("  alimentacion: seccion de cobre que cruza el centro del die")
+    print("  alimentacion: seccion de cobre en el PEOR corte de cada eje")
+    #  SE SUMA CORRIENTE, NO ANCHO. Una micra de Metal5 lleva 1.5 mA y una de
+    #  Metal4 lleva 0.67: sumar micras y compararlas con un unico limite
+    #  suspendia mallas que van sobradas solo por estar en la capa buena.
+    #  Y EL CORTE ES EL PEOR, NO EL DEL MEDIO. Antes se cortaba en
+    #  `max(ancho, alto) / 2`, que sobre un die rectangular no es el centro de
+    #  ningun eje: caia en un sitio afortunado y daba 30.15 mA de VSS vertical
+    #  donde el peor corte real llevaba 16. Un limite que depende de donde se
+    #  mire no es un limite, asi que ahora se barre.
+    #
+    #  Se barre solo DENTRO DEL VANO DE LA NET, entre su primer y su ultimo
+    #  alimentador transversal: mas alla no hay que llevar corriente porque no
+    #  hay de donde cogerla ni donde gastarla, y contar esos cortes daria cero
+    #  sobre metal que no tiene por que existir.
     for net, lst in sorted(por_net.items()):
-        secc = {"vertical": 0.0, "horizontal": 0.0}
-        for capa, w, x0, y0, x1, y1 in lst:
-            #  una barra que cruza la linea y=corte lleva corriente VERTICAL, y
-            #  aporta su ancho en x; y al reves.
-            if min(y0, y1) - w / 2 <= corte <= max(y0, y1) + w / 2 and abs(y1 - y0) > w:
-                secc["vertical"] += w
-            if min(x0, x1) - w / 2 <= corte <= max(x0, x1) + w / 2 and abs(x1 - x0) > w:
-                secc["horizontal"] += w
-        pide = I_BLOQUE_MA / LIMITE_MA_UM[T]["Metal4"]
-        for sentido, s in secc.items():
-            ok = s >= pide
+        cap = {}
+        anc = {}
+        for sentido in ("vertical", "horizontal"):
+            #  las barras que llevan corriente en este sentido...
+            largo = [s for s in lst
+                     if abs((s[5] - s[3]) if sentido == "vertical"
+                            else (s[4] - s[2])) > s[1]]
+            #  ...y las TRANSVERSALES, que son las que la meten y la sacan.
+            cruz = [s for s in lst if s not in largo and LIMITES.get(s[0])]
+            if not largo or not cruz:
+                cap[sentido], anc[sentido] = 0.0, 0.0
+                continue
+            #  Un tramo es (capa, ancho, x0, y0, x1, y1). El alimentador
+            #  transversal de la malla VERTICAL es una barra horizontal, y lo
+            #  que la situa es su Y -- no su X, que era lo que se leia aqui y
+            #  ponia el peor corte en 369 um sobre un die de 387 de alto.
+            pos = [(s[3] if sentido == "vertical" else s[2]) for s in cruz]
+            lo, hi = min(pos), max(pos)
+            peor, peor_c, peor_a = None, 0.0, 0.0
+            n = max(2, int((hi - lo) / 0.5))
+            for i in range(n + 1):
+                c = lo + (hi - lo) * i / n
+                tc = ta = 0.0
+                for capa, w, x0, y0, x1, y1 in largo:
+                    lim = LIMITES.get(capa)
+                    if lim is None:
+                        continue          # vias y capas sin densidad declarada
+                    a, b = (y0, y1) if sentido == "vertical" else (x0, x1)
+                    if min(a, b) - w / 2 <= c <= max(a, b) + w / 2:
+                        tc += w * lim
+                        ta += w
+                if peor is None or tc < peor_c:
+                    peor, peor_c, peor_a = c, tc, ta
+            cap[sentido], anc[sentido] = peor_c, peor_a
+            cap[sentido + "_y"] = peor
+        for sentido in ("vertical", "horizontal"):
+            ok = cap[sentido] >= corriente
             fallos += 0 if ok else 1
-            print(f"    {net:4s} {sentido:10s} {s:7.2f} um de seccion -- "
-                  f"pide {pide:5.2f}   {'OK' if ok else 'CORTO'}")
+            donde = cap.get(sentido + "_y")
+            print(f"    {net:4s} {sentido:10s} {anc[sentido]:6.2f} um -> "
+                  f"{cap[sentido]:6.2f} mA -- pide {corriente:5.2f}   "
+                  f"{'OK' if ok else 'CORTO'}"
+                  + (f"   (peor corte en {donde:.1f} um)" if donde is not None else ""))
         print(f"         ({len(lst)} tramos en total, stubs de tie-off incluidos)")
 
     #  --- las senales -------------------------------------------------------
@@ -184,16 +269,47 @@ def main() -> int:
         fallos += 1
     for nombre, capas in sorted(reglas.items()):
         for capa, w in sorted(capas.items()):
-            minimo = MIN_SENAL.get(capa)
+            minimo = MIN_SENAL.get(nombre, {}).get(capa)
             ok = minimo is None or w >= minimo
             fallos += 0 if ok else 1
             extra = "" if minimo is None else f" (el flujo promete {minimo})"
             print(f"    {nombre:10s} {capa:7s} {w:5.2f} um{extra}   "
                   f"{'OK' if ok else 'CORTO'}")
 
+    #  --- las vias que HAY, no solo las que harian falta --------------------
+    #  Cada `- viaX_Y_..._R_C_...` del bloque VIAS declara su `ROWCOL R C`, o
+    #  sea cuantos cortes lleva. Contar instancias sin mirar eso subestima por
+    #  un factor de doce.
+    cortes_de = {}
+    if "VIAS " in txt and "END VIAS" in txt:
+        blq = txt[txt.index("VIAS "):txt.index("END VIAS")]
+        for m in re.finditer(r"- (\S+).*?LAYERS (\S+) \S+ (\S+).*?ROWCOL (\d+) (\d+)",
+                             blq, re.S):
+            cortes_de[m.group(1)] = (f"{m.group(2)}-{m.group(3)}",
+                                     int(m.group(4)) * int(m.group(5)))
+    if cortes_de and "SPECIALNETS" in txt:
+        sn = txt[txt.index("SPECIALNETS"):txt.index("END SPECIALNETS")]
+        cuenta, net = {}, None
+        for ln in sn.splitlines():
+            s = ln.strip()
+            if s.startswith("- "):
+                net = s.split()[1]
+            for v, (par, n) in cortes_de.items():
+                if v in s and net:
+                    d = cuenta.setdefault(net, {})
+                    d[par] = d.get(par, 0) + n
+        print("\n  vias de alimentacion que hay, en cortes")
+        for net in sorted(cuenta):
+            for par, n in sorted(cuenta[net].items()):
+                cap = n * LIMITE_MA_VIA
+                ok = cap >= corriente
+                fallos += 0 if ok else 1
+                print(f"    {net:4s} {par:14s} {n:5d} cortes -> {cap:7.2f} mA"
+                      f" -- pide {corriente:5.2f}   {'OK' if ok else 'CORTO'}")
+
     #  --- cuantas vias hacen falta -----------------------------------------
-    cortes = int(I_BLOQUE_MA / LIMITE_MA_VIA[T] + 0.999)
-    print(f"\n  vias: {I_BLOQUE_MA} mA a {LIMITE_MA_VIA[T]} mA por corte "
+    cortes = int(corriente / LIMITE_MA_VIA + 0.999)
+    print(f"\n  vias: {corriente} mA a {LIMITE_MA_VIA} mA por corte "
           f"-> hacen falta {cortes} cortes por camino de alimentacion")
 
     print()

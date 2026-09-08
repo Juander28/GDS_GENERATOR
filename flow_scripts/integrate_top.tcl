@@ -16,8 +16,10 @@
 # -----------------------------------------------------------------------------
 
 set CELL   B26_A
-set MACRO  GRADIENT_NAV2
-set OUT    out_integration
+#  Que bloque va dentro. Del entorno, igual que `integrate_padframe.py`, para
+#  que la v2 y la v3 puedan integrarse sin editar el fichero.
+set MACRO  [expr {[info exists ::env(MACRO)] ? $::env(MACRO) : "GRADIENT_NAV2"}]
+set OUT    [expr {[info exists ::env(INT_OUT)] ? $::env(INT_OUT) : "out_integration"}]
 file mkdir $OUT
 
 read_lef lef/techlef_patched.tlef
@@ -441,42 +443,50 @@ foreach {p net off} [list VSS $nVSS $VSS_OFF VDD $nVDD $VDD_OFF] {
 }
 
 #  --- the block's own supplies ------------------------------------------------
-#  In the abstract these two are a 3 x 3 um METAL5 pad on the block's west edge,
-#  sitting over the Metal5 strap of its internal grid -- that is what
-#  `floorplan_top.tcl` puts there and what `macro_lef.py` copies out of the
-#  routed DEF. The buses here are Metal4, so each pad gets a Metal5 run west to
-#  over its bus and a via4 down.
+#  TODOS LOS PUERTOS, no el de mas a la izquierda. El abstracto del bloque trae
+#  un `PORT` de Metal5 por cada strap de su malla interna que llega al borde
+#  oeste —tres de VDD y cuatro de VSS, 29.95 y 39.07 um de seccion—, y hasta
+#  ahora esta rutina se quedaba con UNO. Eso dejaba la alimentacion del bloque
+#  colgando de 3 um de Metal5: 4.5 mA contra los 31 que consume, y era el cuello
+#  que quedaba pendiente en la integracion.
+#
+#  Los buses de aqui son Metal4, asi que cada puerto recibe su tirada de Metal5
+#  hacia el oeste hasta pasar por encima de su bus, y una matriz de via4 para
+#  bajar.
 set inst [$blk findInst x_core]
 lassign [$inst getLocation] ix iy
 foreach {p net off} [list VSS $nVSS $VSS_OFF VDD $nVDD $VDD_OFF] {
     set it [$inst findITerm $p]
     if {$it eq "NULL" || $it eq ""} { error "the macro has no $p terminal" }
-    set best {}
+    set pads {}
     foreach mp [[$it getMTerm] getMPins] {
         foreach b [$mp getGeometry] {
             if {[[$b getTechLayer] getName] ne "Metal5"} { continue }
-            set box [list [expr {[$b xMin]+$ix}] [expr {[$b yMin]+$iy}] \
-                          [expr {[$b xMax]+$ix}] [expr {[$b yMax]+$iy}]]
-            if {$best eq "" || [lindex $box 0] < [lindex $best 0]} { set best $box }
+            lappend pads [list [expr {[$b xMin]+$ix}] [expr {[$b yMin]+$iy}] \
+                               [expr {[$b xMax]+$ix}] [expr {[$b yMax]+$iy}]]
         }
     }
-    if {$best eq ""} { error "the macro has no Metal5 pad for $p" }
-    lassign $best bx0 by0 bx1 by1
-    set px0 [expr {$bx0/double($dbu)}] ; set py0 [expr {$by0/double($dbu)}]
-    set px1 [expr {$bx1/double($dbu)}] ; set py1 [expr {$by1/double($dbu)}]
-    set cy  [expr {($py0 + $py1)/2.0}]
-    #  The run has to start LEFT OF THE FIRST VIA, not at the middle of the bus:
-    #  the via4 column begins at off+0.7 and the run began at off+1.25, so the
-    #  first via's Metal5 pad was left orphaned -- 0.36 um2 against MT.4's
-    #  0.5625, and 0.25 um from the run against MT.2a's 0.38.
-    set bx  [expr {$off + 0.35}]
-    caja $net $L(m5) $bx $py0 $px1 $py1
-    #  Metal4 under the whole run, and via4 everywhere it overlaps the bus.
-    caja $net $L(m4) [expr {$off + 0.2}] $py0 [expr {$off + $BUS_W - 0.2}] $py1
-    set nv [matriz $net Via4_SQ [expr {$off + 0.2}] $py0 \
-                   [expr {$off + $BUS_W - 0.2}] $py1]
-    puts [format "  block %s: Metal5 pad %.2f um tall, %d via4 to the bus" \
-              $p [expr {$py1 - $py0}] $nv]
+    if {[llength $pads] == 0} { error "the macro has no Metal5 pad for $p" }
+    set nv_tot 0 ; set um_tot 0.0
+    foreach pad [lsort -integer -index 1 $pads] {
+        lassign $pad bx0 by0 bx1 by1
+        set py0 [expr {$by0/double($dbu)}] ; set py1 [expr {$by1/double($dbu)}]
+        set px1 [expr {$bx1/double($dbu)}]
+        #  The run has to start LEFT OF THE FIRST VIA, not at the middle of the
+        #  bus: the via4 column begins at off+0.7 and the run began at off+1.25,
+        #  so the first via's Metal5 pad was left orphaned -- 0.36 um2 against
+        #  MT.4's 0.5625, and 0.25 um from the run against MT.2a's 0.38.
+        caja $net $L(m5) [expr {$off + 0.35}] $py0 $px1 $py1
+        #  Metal4 under the whole run, and via4 everywhere it overlaps the bus.
+        caja $net $L(m4) [expr {$off + 0.2}] $py0 [expr {$off + $BUS_W - 0.2}] $py1
+        incr nv_tot [matriz $net Via4_SQ [expr {$off + 0.2}] $py0 \
+                            [expr {$off + $BUS_W - 0.2}] $py1]
+        set um_tot [expr {$um_tot + $py1 - $py0}]
+    }
+    puts [format "  block %s: %d puertos de Metal5, %.2f um de seccion\
+ -> %.2f mA, %d via4 al bus -> %.2f mA" \
+              $p [llength $pads] $um_tot [expr {$um_tot * 1.5}] \
+              $nv_tot [expr {$nv_tot * 0.18}]]
 }
 
 # --- alimentacion de los clamps de ESD ---------------------------------------

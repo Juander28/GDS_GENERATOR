@@ -31,6 +31,11 @@ from pathlib import Path
 
 PROJECT = Path("/foss/designs/a_zonetic2026")
 XSCHEM = PROJECT / "XSCHEM"
+#: Where the TOP's netlist lives. The blocks always come from XSCHEM/; only the
+#: top can move, because `GRADIENT_NAV2_V3` -- the port-reordering experiment --
+#: has its own tree. The Makefile passes it as SCHDIR; here it arrives as an
+#: environment variable so nothing else has to know.
+SCHDIR = Path(os.environ.get("SCHDIR_ABS", XSCHEM))
 VERILOG = Path(__file__).resolve().parent.parent / "verilog"
 
 #: Which top gets translated. `GRADIENT_NAV` builds four GRADIENT blocks, with
@@ -38,7 +43,7 @@ VERILOG = Path(__file__).resolve().parent.parent / "verilog"
 #: with the linear amplifier. Both have to coexist, so everything generated
 #: carries the name of its top.
 TOP = os.environ.get("TOP_CELL", "GRADIENT_NAV")
-NETLIST = XSCHEM / f"simulation/{TOP}.sch/{TOP}.spice"
+NETLIST = SCHDIR / f"simulation/{TOP}.sch/{TOP}.spice"
 OUT = VERILOG / f"{TOP}.v"
 OUT_FLAT = VERILOG / f"{TOP}_macros.v"
 

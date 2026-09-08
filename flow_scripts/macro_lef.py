@@ -21,6 +21,7 @@ the middle, and on an edge pin it simply buries it.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -30,8 +31,12 @@ import klayout.db as kdb
 import build_collateral as bc
 
 ROOT = Path(__file__).resolve().parent.parent
-BLOCK = "GRADIENT_NAV2"
-_OUT = ROOT / "out_v2_GRADIENT_NAV2"
+#: Que top se abstrae. Sale del entorno como en el resto del flujo (`TOP_CELL`
+#: y `TOP_OUT` los exporta el Makefile), para que la v3 y la v2 puedan
+#: convivir. Con los nombres a fuego habia que editar el fichero para cambiar
+#: de bloque, y editar un fichero no deja rastro en ningun sitio.
+BLOCK = os.environ.get("TOP_CELL", "GRADIENT_NAV2")
+_OUT = ROOT / os.environ.get("TOP_OUT", f"out_v2_{BLOCK}")
 
 #: DE DONDE SALE LA GEOMETRIA, en orden de preferencia.
 #:
@@ -48,7 +53,8 @@ GDS = next((g for g in (_OUT / f"{BLOCK}_filled.gds",
                         _OUT / f"{BLOCK}.gds") if g.exists()),
            _OUT / f"{BLOCK}_filled.gds")
 DEF = _OUT / f"{BLOCK}_routed.def"
-NET = ROOT.parent / "XSCHEM/simulation" / f"{BLOCK}.sch" / f"{BLOCK}.spice"
+NET = (Path(os.environ.get("SCHDIR_ABS", ROOT.parent / "XSCHEM"))
+       / "simulation" / f"{BLOCK}.sch" / f"{BLOCK}.spice")
 OUT = ROOT / "lef" / f"{BLOCK}.lef"
 #: How far the obstructions are pulled back from a pin, so the router has
 #: somewhere to land rather than just an edge.
@@ -56,7 +62,14 @@ CLEAR = 0.20
 
 
 def def_pins(path: Path):
-    """{name: (layer, x0, y0, x1, y1)} in um, absolute, from the routed DEF."""
+    """{name: [(layer, x0, y0, x1, y1), ...]} en um, absolutos, del DEF ruteado.
+
+    UNA LISTA, NO UNA CAJA. `VDD` y `VSS` salen del bloque por VARIOS puertos —
+    uno por cada strap de Metal5 que llega al borde— y quedarse con el ultimo
+    dejaba el abstracto con un solo pad de 3 um: 4.5 mA para un bloque que pide
+    31, y ademas el que tocara, que no tiene por que ser el que mejor le venga
+    al bus de la integracion.
+    """
     txt = path.read_text()
     dbu = int(re.search(r"UNITS DISTANCE MICRONS (\d+)", txt).group(1))
     out, cur, rel = {}, None, None
@@ -65,6 +78,9 @@ def def_pins(path: Path):
         if m:
             cur, rel = m.group(1), None
             continue
+        if line.strip() == "END PINS":
+            cur, rel = None, None
+            continue
         m = re.match(r"\s*\+ LAYER (\S+) \( (-?\d+) (-?\d+) \) \( (-?\d+) (-?\d+) \)", line)
         if m and cur:
             rel = (m.group(1),) + tuple(int(v) for v in m.groups()[1:])
@@ -72,9 +88,11 @@ def def_pins(path: Path):
         m = re.match(r"\s*\+ (?:PLACED|FIXED) \( (-?\d+) (-?\d+) \)", line)
         if m and cur and rel:
             x, y = int(m.group(1)), int(m.group(2))
-            out[cur] = (rel[0], (x + rel[1]) / dbu, (y + rel[2]) / dbu,
-                        (x + rel[3]) / dbu, (y + rel[4]) / dbu)
-            cur, rel = None, None
+            caja = (rel[0], (x + rel[1]) / dbu, (y + rel[2]) / dbu,
+                    (x + rel[3]) / dbu, (y + rel[4]) / dbu)
+            if caja not in out.setdefault(cur, []):
+                out[cur].append(caja)
+            rel = None            # `cur` sigue: el pin puede traer mas PORT
     return out
 
 
@@ -101,8 +119,9 @@ def main() -> int:
     m = re.search(r"SIZE ([\d.]+) BY ([\d.]+)", raw)
     W, H = float(m.group(1)), float(m.group(2))
     porlayer = {}
-    for name, (l, *b) in pins.items():
-        porlayer.setdefault(l, []).append(b)
+    for name, cajas in pins.items():
+        for l, *b in cajas:
+            porlayer.setdefault(l, []).append(b)
     cuerpo, tocados = ["  OBS"], 0
     for l in ("Metal1", "Metal2", "Metal3", "Metal4", "Metal5"):
         reg = kdb.Region()
@@ -123,18 +142,30 @@ def main() -> int:
 
     #  the pins, straight from the DEF
     pin_txt = []
+    npuerto = 0
     for name, d in dirs.items():
-        l, x0, y0, x1, y1 = pins[name]
         use = ("POWER" if name in bc.POWER else
                "GROUND" if name in bc.GROUND else "SIGNAL")
-        pin_txt += [f"  PIN {name}", f"    DIRECTION {d} ;", f"    USE {use} ;",
-                    "    PORT", f"      LAYER {l} ;",
-                    f"        RECT {x0:.3f} {y0:.3f} {x1:.3f} {y1:.3f} ;",
-                    "    END", f"  END {name}"]
+        pin_txt += [f"  PIN {name}", f"    DIRECTION {d} ;", f"    USE {use} ;"]
+        #  UN `PORT` POR CAJA. Son puertos alternativos del mismo pin, que es
+        #  justo lo que son: el bloque saca su alimentacion por varios straps y
+        #  la integracion puede —y debe— engancharse a todos.
+        for l, x0, y0, x1, y1 in pins[name]:
+            pin_txt += ["    PORT", f"      LAYER {l} ;",
+                        f"        RECT {x0:.3f} {y0:.3f} {x1:.3f} {y1:.3f} ;",
+                        "    END"]
+            npuerto += 1
+        pin_txt += [f"  END {name}"]
 
     OUT.write_text(cabecera + "\n".join(pin_txt) + "\n"
                    + "\n".join(cuerpo) + f"\nEND {BLOCK}\n")
-    print(f"  {len(pins)} pins taken from {DEF.name}, not from magic's ports")
+    print(f"  {len(pins)} pins ({npuerto} puertos) taken from {DEF.name}, "
+          f"not from magic's ports")
+    for name in sorted(pins):
+        if len(pins[name]) > 1:
+            ancho = sum(y1 - y0 for _, _, y0, _, y1 in pins[name])
+            print(f"    {name}: {len(pins[name])} puertos, {ancho:.2f} um de "
+                  f"seccion en total")
     print(f"  obstructions: the whole outline on 5 layers, pins carved out on {tocados}")
     print(f"  -> {OUT}   {re.search(r'SIZE .*', cabecera).group(0)}")
     return 0

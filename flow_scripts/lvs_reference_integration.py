@@ -36,13 +36,15 @@ that.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BLOQUE = ROOT / "out_v2_GRADIENT_NAV2" / "GRADIENT_NAV2_lvs.spice"
-CELDA_BLOQUE = "GRADIENT_NAV2"
+CELDA_BLOQUE = os.environ.get("MACRO", "GRADIENT_NAV2")
+BLOQUE = (ROOT / os.environ.get("MACRO_OUT", f"out_v2_{CELDA_BLOQUE}")
+          / f"{CELDA_BLOQUE}_lvs.spice")
 CELDA = "B26_A"
 DESTINO = ROOT / "out_integration" / f"{CELDA}_lvs.spice"
 

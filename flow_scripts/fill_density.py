@@ -138,7 +138,7 @@ def region(cell, layer_index, dbu: float) -> kdb.Region:
 
 
 def colocacion(defpath: Path | None = None) -> list[tuple[str, str, float, float, float, float]]:
-    """The placed macros: `(instance, cell, x, y, width, height)`, from the DEF.
+    """The placed macros: `(instance, cell, x, y, width, height, orientation)`, from the DEF.
 
     Taken from here and not from the GDS because the top GDS is **flattened**
     (see `def_to_gds.py::flatten_all`) and has no instances left to look at. The
@@ -166,7 +166,10 @@ def colocacion(defpath: Path | None = None) -> list[tuple[str, str, float, float
             continue
         x, y = int(m.group(3)) / unidades, int(m.group(4)) / unidades
         w, h = tam[cell]
-        out.append((m.group(1), cell, x, y, w, h))
+        #  La ORIENTACION tambien: con las filas espejadas un macro `FS` saca
+        #  VDD por abajo y VSS por arriba, justo al reves que uno `N`, y el
+        #  relleno de desacoplo tiene que saberlo o cortocircuita los railes.
+        out.append((m.group(1), cell, x, y, w, h, m.group(5)))
     return out
 
 
@@ -207,7 +210,7 @@ def huella_macros() -> kdb.Region:
     well with no implant of its own.
     """
     out = kdb.Region()
-    for _, _, x, y, w, h in colocacion():
+    for _, _, x, y, w, h, _ in colocacion():
         out.insert(kdb.DBox(x, y, x + w, y + h).to_itype(1e-3))
     if GAPS.exists():
         for line in GAPS.read_text().split("\n"):

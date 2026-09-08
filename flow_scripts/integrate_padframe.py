@@ -25,6 +25,7 @@ places and routes them.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -34,7 +35,11 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 PROJECT = ROOT.parent
 PADFRAME = ROOT / "padframe"
-MACRO = "GRADIENT_NAV2"
+#: El bloque que va dentro del area de usuario. Del entorno, como el resto del
+#: flujo: `MACRO=GRADIENT_NAV2_V3` mete la v3 sin tocar este fichero.
+MACRO = os.environ.get("MACRO", "GRADIENT_NAV2")
+#: Y de donde salen su DEF ruteado y su LEF.
+MACRO_OUT = os.environ.get("MACRO_OUT", f"out_v2_{MACRO}")
 CELL = "B26_A"
 
 # --------------------------------------------------------------------------- #
@@ -314,7 +319,7 @@ def build():
     #  origins, with the block kept clear of the four edges. Only the SIGNAL and
     #  supply pins count: the 48 tie-offs go to a rail and their distance to the
     #  macro means nothing.
-    die = read_die_pins(ROOT / "out_v2_GRADIENT_NAV2" / f"{MACRO}_routed.def")
+    die = read_die_pins(ROOT / MACRO_OUT / f"{MACRO}_routed.def")
     #  The six digital signals are called XP in the macro and XP_OUT in the
     #  padring, so they have to be mapped or they drop out of the cost and the
     #  placement is chosen from 13 pins instead of 19.

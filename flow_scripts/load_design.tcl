@@ -48,10 +48,20 @@ read_lef lef/vias.lef
 #  OpenROAD binds every instance to the LEF MACRO of the same name, so the top
 #  would bind to a leaf cell of itself. It also has no lib/<TOP>.lib, which is
 #  how it announced itself -- "cannot read file lib/GRADIENT_NAV2.lib".
+#  La condicion es la AUSENCIA DE .lib, no el nombre del top. Antes se saltaba
+#  solo `lef/$DESIGN_TOP.lef`, y eso deja de valer en cuanto hay mas de un top:
+#  construyendo GRADIENT_NAV2_V3 se intentaba leer el abstracto de
+#  GRADIENT_NAV2, que no tiene .lib, y el error salia en el read_liberty.
+#  Un abstracto de top se reconoce por no traer libreria; un macro hoja siempre
+#  la trae, porque `build_collateral.py` escribe las dos a la vez.
 foreach lef [lsort [glob -nocomplain lef/*.lef]] {
     if {[file tail $lef] eq "vias.lef"} { continue }   ;# ya leido arriba
     set macro [file rootname [file tail $lef]]
     if {$macro eq $DESIGN_TOP} { continue }
+    if {![file exists lib/$macro.lib]} {
+        puts "  (salto lef/$macro.lef: no tiene lib/$macro.lib, es el abstracto de un top)"
+        continue
+    }
     read_lef     $lef
     read_liberty lib/$macro.lib
 }

@@ -94,7 +94,9 @@ GDS_OUT = OUT / f"{TOP}_decap.gds"
 DEF = OUT / f"{TOP}_routed.def"
 DEV_TXT = OUT / "decap_devices.txt"
 GAPS_TXT = OUT / "decap_gaps.txt"
-SCH = PROJECT / "XSCHEM" / f"{TOP}.sch"
+#  El esquematico del top puede vivir fuera de XSCHEM/: `GRADIENT_NAV2_V3` esta
+#  en su propio arbol. El Makefile lo pasa como SCHDIR_ABS.
+SCH = Path(os.environ.get("SCHDIR_ABS", PROJECT / "XSCHEM")) / f"{TOP}.sch"
 
 # --- capas de GF180 -----------------------------------------------------------
 COMP, POLY, PPLUS, NPLUS, CONT, M1, NWELL = (22, 0), (30, 0), (31, 0), (32, 0), (33, 0), (34, 0), (21, 0)
@@ -489,7 +491,7 @@ def shelves(macros) -> dict[tuple[float, float], list[tuple[float, float]]]:
     lets a tile dropped between two of them connect by abutment.
     """
     out: dict[tuple[float, float], list[tuple[float, float]]] = {}
-    for _, _, x, y, w, h in macros:
+    for _, _, x, y, w, h, _ in macros:
         out.setdefault((round(y, 3), round(h, 3)), []).append((x, x + w))
     for v in out.values():
         v.sort()
@@ -512,7 +514,7 @@ def gaps(macros, die: kdb.DBox):
         if h < MIN_HEIGHT:
             continue
         #  Any macro overlapping this shelf in `y` blocks its slice of x.
-        tapado = sorted((mx, mx + mw) for _, _, mx, my, mw, mh in macros
+        tapado = sorted((mx, mx + mw) for _, _, mx, my, mw, mh, _ in macros
                         if my < y + h and my + mh > y)
         fundido: list[list[float]] = []
         for a, b in tapado:
@@ -578,7 +580,7 @@ def comprobar(m1: kdb.Region, dbu: float, placed, ext_de) -> list[str]:
         p = kdb.Region(kdb.DBox(x - 0.05, y - 0.05, x + 0.05, y + 0.05).to_itype(dbu))
         return fundido.interacting(p)
 
-    for name, x0, x1, y, h, hay_izq, hay_der in placed:
+    for name, x0, x1, y, h, hay_izq, hay_der, _flip in placed:
         cx = (x0 + x1) / 2
         c_vss = componente(cx, y + RAIL_W / 2)
         c_vdd = componente(cx, y + h - RAIL_W / 2)
@@ -652,7 +654,11 @@ def parchear_sch(lines: list[str]) -> bool:
     #  1968 - 156 + 99 = 1911 (los 99 son los once clamps), y el LVS de la
     #  integracion se caia entero: 11 nets emparejadas de 1778.
     destinos = [SCH]
+    #  `B26_A` instancia el top del die; un top experimental no esta ahi
+    #  dentro, y tocarlo seria meterle desacoplos que no le corresponden.
     otro = PROJECT / "XSCHEM" / "B26_A.sch"
+    if SCH.parent != PROJECT / "XSCHEM":
+        otro = SCH
     if otro != SCH and otro.exists():
         destinos.append(otro)
     if not SCH.exists():
@@ -722,6 +728,15 @@ def main() -> int:
     m1.merge()
 
     macros = colocacion(DEF)
+    #  Que orientacion tiene cada estanteria. Todas las celdas de una fila van
+    #  igual, asi que basta la primera. `FS` es el espejo vertical: esa fila
+    #  saca VDD por abajo y VSS por arriba, al reves que una `N`, y el mosaico
+    #  de relleno --que dibuja VSS abajo y VDD arriba-- hay que espejarlo
+    #  tambien o suelda los dos railes. Sin esto el LVS pierde el pin VDD
+    #  entero: los dos nodos de alimentacion salen fundidos en uno.
+    ori_de = {}
+    for _, _, mx, my, mw, mh, mo in macros:
+        ori_de.setdefault((my, mh), mo)
     libres = gaps(macros, die)
 
     #  The tiles are built INSIDE the top layout: `copy_device` handles
@@ -770,6 +785,18 @@ def main() -> int:
         if not ((ext[0] > 0 or ext[1] > 0) and (ext[2] > 0 or ext[3] > 0)):
             skipped.append((x0, x1, y, h, "the neighbouring macro has no rail at that height"))
             continue
+        #  Si la fila va espejada, el mosaico tambien, y entonces su barra de
+        #  VSS --que se dibuja en el borde de abajo-- acaba ARRIBA. Las
+        #  extensiones se midieron sin espejar, asi que hay que cambiarlas de
+        #  pareja o la barra sobresale donde no toca: contra el rail metido de
+        #  WEIGHT_COMP daba dos M1.2a de 0.115 um.
+        flip = False
+        for (my, mh), mo in ori_de.items():
+            if my - 0.01 <= y and y + h <= my + mh + 0.01:
+                flip = mo in ("FS", "S")
+                break
+        if flip:
+            ext = (ext[2], ext[3], ext[0], ext[1])
         name = f"DECAP_{int(round(x0*100))}_{int(round(y*100))}"
         cell, devices = tile(ly, width, h, name, ext, tuple(nw))
         if not devices:
@@ -779,7 +806,7 @@ def main() -> int:
             ly.delete_cell_rec(cell.cell_index())
             skipped.append((x0, x1, y, h, "not even one band fits"))
             continue
-        specs.append((name, x0, x1, y, h, hay_izq, hay_der))
+        specs.append((name, x0, x1, y, h, hay_izq, hay_der, flip))
         devs_per_tile[name] = devices
         ext_de[name] = ext
         placed.append((x0, x1, y, y + h))
@@ -787,10 +814,19 @@ def main() -> int:
     if not specs:
         sys.exit("  no gap could be filled")
 
-    for name, x0, x1, y, h, _, _ in specs:
+    espejados = 0
+    for name, x0, x1, y, h, _, _, flip in specs:
         cell = ly.cell(name)
-        top.insert(kdb.DCellInstArray(cell.cell_index(),
-                                      kdb.DTrans(kdb.DVector(x0, y))))
+        if flip:
+            #  Espejo respecto a la horizontal media del mosaico: el punto
+            #  (px, py) del mosaico cae en (px + x0, y + h - py).
+            tr = kdb.DTrans(0, True, x0, y + h)
+            espejados += 1
+        else:
+            tr = kdb.DTrans(kdb.DVector(x0, y))
+        top.insert(kdb.DCellInstArray(cell.cell_index(), tr))
+    print(f"    {espejados} de {len(specs)} mosaicos espejados "
+          f"(filas FS: sacan VDD por abajo)")
     #  Flattened, like the rest of the top (`def_to_gds.py::flatten_all`): LVS
     #  compares against a flattened reference and a new hierarchy here would make
     #  the deck extract subcircuits the reference does not have.
@@ -809,7 +845,7 @@ def main() -> int:
     lines = lineas_spice(devices)
     DEV_TXT.write_text("\n".join(lines) + "\n")
     GAPS_TXT.write_text("\n".join(
-        f"{x0:.3f} {y:.3f} {x1:.3f} {y + h:.3f}" for _, x0, x1, y, h, _, _ in specs) + "\n")
+        f"{x0:.3f} {y:.3f} {x1:.3f} {y + h:.3f}" for _, x0, x1, y, h, _, _, _ in specs) + "\n")
     parchear_sch(lines)
 
     #  --- informe --------------------------------------------------------------
@@ -820,7 +856,7 @@ def main() -> int:
         reg_libre.insert(kdb.DBox(x0, y, x1, y + h).to_itype(dbu))
     reg_libre.merge()
     area_total = reg_libre.area() * dbu * dbu
-    area_llena = sum((x1 - x0) * h for _, x0, x1, y, h, _, _ in specs)
+    area_llena = sum((x1 - x0) * h for _, x0, x1, y, h, _, _, _ in specs)
     n_n = sum(1 for t, _, _ in devices if t == "n")
     w_n = sum(w for t, w, _ in devices if t == "n")
     w_p = sum(w for t, w, _ in devices if t == "p")

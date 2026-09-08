@@ -19,16 +19,21 @@ needs 22.10" -- not with a yes or no.
 
 WHAT THE NUMBERS ARE, and where they come from:
 
-  * the block draws **14.81 mA at 5 V**, measured on the RC-extracted layout.
-    That is the whole current of the user area, so it is what each supply ring
-    has to carry.
-  * the PDK's maximum line current density (Integration README, from the design
-    manual), unidirectional:
+  * the block draws **15.50 mA of peak at 5 V**, measured on the RC-extracted
+    layout, and the supply is sized for **double**: 31 mA. The sizing current is
+    an ARGUMENT, not a constant in this file -- see `sys.argv[2]`.
+  * the limits come from the **PDK's tech-LEF**, read at run time by
+    `limites_del_pdk()`, as `DCCURRENTDENSITY AVERAGE`:
 
-        Metal1..Metal4   2.09 / 1.00 / 0.67 mA/um   at 85 / 110 / 125 C
-        Via 0.26 um      0.58 / 0.28 / 0.18 mA per cut
+        Metal1..Metal4   0.67 mA per um of width
+        Metal5           1.5  mA per um
+        Via1..Via4       0.18 mA per cut
 
-    Sized at **125 C**, the column that assumes nothing about where this runs.
+    They do **NOT depend on temperature**: the three corners carry identical
+    numbers. What an earlier version of this file called
+    "2.09 / 1.00 / 0.67 at 85 / 110 / 125 C" was the AC and the DC figure of
+    the same layer misread as three temperatures; the DC one is what applies to
+    a continuous supply, and it is the one that ended up being used.
 
   * the seventeen signals carry next to nothing -- eight drive MOS gates and six
     a pad's data input -- so for them the rule is not electromigration but the
@@ -38,8 +43,13 @@ HOW THE SUPPLIES ARE JUDGED. Not by the narrowest segment: the narrowest bits
 of VDD and VSS are the 48 tie-off stubs, 0.38 um leaves that hold a control pin
 at a rail and carry none of the block's current.  What limits is how much copper
 CROSSES a line between the edge, where the current comes in, and the block,
-where it is spent -- so the die is cut in half on each axis and the widths of
-everything crossing are added up.
+where it is spent -- so a line is swept along each axis and the widths of
+everything crossing it are added up.
+
+AND THE CUT IS THE WORST ONE, NOT THE MIDDLE. It used to cut at
+`max(width, height) / 2`, which on a rectangular die is the centre of neither
+axis: it landed somewhere lucky and reported 30.15 mA of VSS where the worst
+real cut carried 16. A bound that depends on where you look is not a bound.
 
 WHAT IT DOES NOT DO. It does not simulate: there is no IR-drop solve here and no
 per-branch current.  It bounds, it does not distribute. `analyze_power_grid` would give

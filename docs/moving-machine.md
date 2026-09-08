@@ -264,9 +264,11 @@ DRC_THR=4 DRC_MP=4 make drc T=B26_A TOP_OUT=out_integration ARGS=B26_A_FILLED
 make lvs-klayout T=B26_A TOP_OUT=out_integration ARGS=B26_A_FILLED
 ```
 
-The deliverable is `openroad/out_integration/B26_A_filled3.gds`, archived as
-`integration/gds/2026-08-31_02`. `HANDOFF.md` §5 has the state of everything and
-what is left to do.
+The deliverable is `openroad/out_integration/B26_A_filled4.gds`, archived as
+`integration/gds/2026-09-08_01` with sha `543d31ff…`. `HANDOFF.md` §5 has the
+state of everything and what is left to do — and
+`openroad/scripts/check_docs.py` checks that this paragraph is still true, which
+is why it says `_filled4` and not `_filled3`.
 
 ---
 

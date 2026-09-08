@@ -187,20 +187,29 @@ puts "  verified: every pin box matches padframe/B26_A.def exactly"
 #  stub going to the far bus simply CROSSES the near one, Metal2 over Metal4,
 #  and only drops a via at its own. No detour, no divergence.
 #
-#  HOW WIDE THE RING HAS TO BE. Not a guess: the block draws 14.81 mA at 5 V,
-#  measured on the RC-extracted layout, and the PDK's maximum line current
-#  density (Integration README, from the design manual) is
+#  HOW WIDE THE RING HAS TO BE. Not a guess: the block draws 15.50 mA of peak
+#  at 5 V, measured on the RC-extracted layout, and the supply is sized for
+#  DOUBLE -- 31 mA. The limits are the PDK's own, declared in the tech-LEF as
+#  `DCCURRENTDENSITY AVERAGE`:
 #
-#      Metal1..Metal4  unidirectional   2.09 / 1.00 / 0.67 mA/um at 85/110/125 C
-#      Via 0.26 um     unidirectional   0.58 / 0.28 / 0.18 mA per cut
+#      Metal1..Metal4   0.67 mA per um of width
+#      Metal5           1.5  mA per um
+#      Via1..Via4       0.18 mA per cut
 #
-#  so 14.81 mA needs 7.1 um at 85 C, 14.8 at 110 and 22.1 at 125. It started at
-#  2.5 um, which carries 5.2 mA at 85 C -- short by a factor of three at the
-#  most generous temperature there is. That is electromigration, not style.
+#  They do NOT depend on temperature -- the three corners carry the same
+#  numbers. The "2.09 / 1.00 / 0.67 at 85/110/125 C" that used to be written
+#  here was AC and DC of the same layer read as three temperatures.
 #
-#  Sized for 125 C, the column that assumes nothing about where this runs. It
-#  costs nothing here: the area is 1110 um across and the block is 418.
-set BUS_W    24.0     ;# 22.1 um needed at 125 C, plus margin
+#  So 31 mA needs 46.3 um of Metal4. The ring started at 2.5 um, which carries
+#  1.7 mA -- short by a factor of eighteen. That is electromigration, not
+#  style, and NO DRC RULE CHECKS IT: `scripts/check_current_density.py` does,
+#  on the routed DEF.
+#
+#  It costs nothing here: the area is 1110 um across and the block is 461.
+#  24 um per side, and the ring is CLOSED, so any cut of the die crosses two of
+#  them: 48.00 um -> 32.16 mA, measured on the routed DEF against the 31 asked
+#  for. One side alone would be 16.08 and would not do.
+set BUS_W    24.0
 set VSS_OFF  2.0      ;# from the edge to the outer ring
 set VDD_OFF  28.0     ;# ... and to the inner one, 2 um of clearance between
 set VIA_P    0.90     ;# via pitch of the arrays; 82 cuts are needed at 125 C

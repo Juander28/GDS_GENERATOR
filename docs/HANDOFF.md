@@ -326,17 +326,28 @@ That is why the bench's fine window sits at 50 ppm.
   anything. `integrate_top.tcl` sizes the power ring in a **comment**; a comment
   is not a measurement. `scripts/check_current_density.py` reads the routed DEF,
   measures what is drawn, and contrasts it with what each net has to carry.
-* The numbers: the block draws **14.81 mA at 5 V** (measured on the
-  RC-extracted layout), and the PDK's limit at **125 C** — the column that
-  assumes nothing — is **0.67 mA/um** of line and **0.18 mA per via cut**. So a
-  supply needs 22.10 um of metal and 83 via cuts per path.
+* The numbers, **as of 2026-09-07**: the block draws **15.50 mA of peak** and
+  the supply is sized for **double**, 31 mA. The PDK's limits are in the
+  tech-LEF as `DCCURRENTDENSITY AVERAGE` — **0.67 mA/um** on Metal1..Metal4,
+  **1.5** on Metal5, **0.18 mA per via cut** — and they do **not** depend on
+  temperature: all three corners carry the same numbers. So a supply needs
+  46.3 um of Metal4, 20.7 um of Metal5 and 173 via cuts per path.
+  *(The older figures in this file — 14.81 mA, 22.10 um, 83 cuts — were the v1
+  navigator's average, and the "2.09 / 1.00 / 0.67 at 85 / 110 / 125 C" table
+  was AC and DC of the same layer misread as three temperatures.)*
 * **Do not judge a supply by its narrowest segment.** That criterion failed the
   ring at 0.38 um — which is the width of the 48 **tie-off stubs**, leaves that
   hold a control pin at a rail and carry none of the block's current. What
   limits is how much copper **crosses** a line between the edge, where the
   current comes in, and the block, where it is spent. The script cuts the die in
-  half on each axis and adds up the widths crossing: 48.00 um against 22.10
-  required, per supply, per direction.
+  half on each axis and adds up the widths crossing.
+* **And it cuts at the WORST place, not at the middle** (fixed 2026-09-07). It
+  used to cut at `max(width, height) / 2`, which on a rectangular die is the
+  centre of neither axis: it landed somewhere lucky and read 30.15 mA of VSS
+  where the worst real cut carried 16. A bound that depends on where you look is
+  not a bound. Measured on the block at 31 mA: VDD vertical 48.08 um -> 32.21 mA,
+  VSS vertical 46.89 -> 31.42, VDD horizontal 39.95 -> 59.92, VSS horizontal
+  78.14 -> 117.21.
 * A regex that stopped at the first `+ LAYER ... WIDTH` line read **two of the
   five** non-default rules and called the run clean. `[^\n]*` at the end of the
   repetition fixed it — the Metal2..Metal4 lines carry a trailing `SPACING`.
@@ -413,23 +424,25 @@ deleted — they are simply not what gets instantiated.**
 
 ## 5. Where the flow stands, block by block
 
-Measured 2026-09-01. **The deliverable is clean; nothing has to be rebuilt.**
+Measured **2026-09-08**. **The deliverable is clean; nothing has to be rebuilt.**
 
 | thing | state | evidence |
 |---|---|---|
 | `COMP`, `DECODER`, `DECODER_MAX`, `OPAM`, `OPAM_LIN_flat`, `WEIGHT_COMP` | **built, clean** — KLayout LIMPIO, netgen CASAN | `layouts_v2/*/lvs/RESUMEN.txt` |
 | `ESD_CDM` | **built, clean** | `layouts_v2/ESD_CDM/lvs/RESUMEN.txt` |
-| `OPAM_SUMA` | **broken, and left broken on purpose** — `GRADIENT_NAV2` does not use it | same file |
-| `GRADIENT_NAV2` | **rebuilt**, 460.90 x 386.99 um, netgen `Circuits match uniquely` | `out_v2_GRADIENT_NAV2/` |
-| **`B26_A_filled3.gds`** — THE DELIVERABLE | rebuilt 2026-09-02 with the merged clamp n-wells, sha `41bef27a…` (it is **no longer** byte-identical to `_filled2`/`_filled`, which were `95ebcf92…`). Archived under `integration/gds/`, DRC filed under its own name | `lvs_config.json -> LAYOUT_FILE`, `info.yaml` |
-| — sign-off DRC, **`main`/deep**, with connectivity | **660 rule categories, 0 items**, with `MSLOT.1` and `NW.2b_MV` both among them, so both really ran | `out/drc_B26_A_FILLED/B26_A_filled_main.lyrdb` |
-| — density pass | clean | `out/density_B26_A_FILLED` |
+| `OPAM_SUMA` | **broken, and left broken on purpose** — the navigator does not use it | same file |
+| `GRADIENT_NAV2_V3` — **the block that ships** | 460.90 x 386.99 um, mirrored rows, supply at 31 mA. DRC 63 tables 0 items and netgen `Circuits match uniquely` **twice**: 1407 = 1407 without decoupling, 1409 = 1409 with it, 883 nets both | `out_v2_GRADIENT_NAV2_V3/` |
+| `GRADIENT_NAV2` — the earlier core | still built and clean, no longer instantiated | `out_v2_GRADIENT_NAV2/` |
+| **`B26_A_filled4.gds`** — THE DELIVERABLE | rebuilt 2026-09-07 with `GRADIENT_NAV2_V3` inside, sha `543d31ff…`. Archived under `integration/gds/2026-09-08_01`, DRC filed under its own name. `_filled3` (`41bef27a…`, the v2 core) is superseded and stays archived under `2026-09-02_06` | `lvs_config.json -> LAYOUT_FILE`, `info.yaml` |
+| — split-table DRC, 63 tables | **63 tables, 0 items** | `out/drc_B26_A_FILLED4/` |
+| — density pass | clean | `drc_klayout.py --density B26_A_FILLED4` |
+| — sign-off DRC **`main`/deep**, with connectivity | **660 categories, 0 items** — measured on `_filled3`; **not re-run on `_filled4`** | `out/drc_B26_A_FILLED/B26_A_filled_main.lyrdb` |
 | — `MSLOT.1` | **0** (was 11) | `drc_klayout.mslot1_local` |
 | — `PR_bndry` | **1** | `def_to_gds.una_sola_frontera()` |
-| — LVS netgen | **`Circuits match uniquely`** | `out_integration/lvs_netgen_B26_A.rpt` |
-| — sign-off DRC, **`--no_connectivity`** | **0 items** (was 33 `NW.2b_MV` before the clamp fix). The deck passes in BOTH modes now | `out/verif_sinconn_full` |
-| — `check_integration.py` | **17 / 17**, 11 through their clamp | script output |
-| — current density | 48.00 um of section against 22.10 required | `check_current_density.py` |
+| — LVS netgen | **`Circuits match uniquely`**, 1442 = 1442 devices, 894 = 894 nets | `out_integration/lvs_netgen_B26_A.rpt` |
+| — sign-off DRC, **`--no_connectivity`** | **0 items** (was 33 `NW.2b_MV` before the clamp fix) — measured on `_filled3`; **not re-run on `_filled4`** | `out/verif_sinconn_full` |
+| — `check_integration.py` | **17 / 17** signals, 11 through their clamp; **50 / 50** tie-offs and supplies on their rail | script output |
+| — current density | all four conductors carry **31 mA** at the **worst** cut of each axis | `check_current_density.py ... 31` |
 | — LVS KLayout | **does not match, and it is not the circuit** | [`lvs-klayout-top.md`](lvs-klayout-top.md) |
 
 Two things were fixed on 31 August and are worth knowing about:
@@ -495,7 +508,7 @@ integrated area:
 | key | value |
 |---|---|
 | `TOP_SOURCE` / `TOP_LAYOUT` | `B26_A` |
-| `LAYOUT_FILE` | `$UPRJ_ROOT/FINAL/openroad/out_integration/B26_A_filled3.gds` |
+| `LAYOUT_FILE` | `$UPRJ_ROOT/FINAL/openroad/out_integration/B26_A_filled4.gds` — **updated 2026-09-07**; it named `_filled3` until then |
 | `LVS_SPICE_FILES` | `$UPRJ_ROOT/FINAL/openroad/out_integration/B26_A_lvs.spice` — **corrected 2026-09-01**; it used to point at `.../out_v2_GRADIENT_NAV2/GRADIENT_NAV2_lvs.spice` |
 | `LVS_VERILOG_FILES` | `$UPRJ_ROOT/FINAL/openroad/verilog/B26_A.v` |
 
@@ -649,7 +662,7 @@ databases. They weigh hundreds of megabytes, they are regenerated by the flow,
 and a stale one is exactly how a DRC and an LVS come to pass against the wrong
 circuit. The deliverables live in the design repository.
 
-LFS is not needed: the largest file is `B26_A_filled.gds` at ~42 MB, under
+LFS is not needed: the largest file is `B26_A_filled4.gds` at ~14 MB, under
 GitHub's 100 MB limit. `FINAL/.gitattributes` declares `*.gds binary` so that
 line-ending normalisation cannot corrupt a GDS.
 

@@ -106,7 +106,11 @@ niega las tres entradas del decodificador a la vez:
 No hay que tocar ni los amplificadores ni las entradas del top: cruzarlos ahí haría lo mismo
 pero además cambiaría el signo del gradiente reconstruido, que sí se usa.
 
-Está preparado en `XSCHEM_v2/COMBINATION/GRADIENT2_MAX.sch` y **el top no lo instancia**.
+**Ese fichero no existe.** Aquí se dijo que estaba preparado en
+`XSCHEM_v2/COMBINATION/GRADIENT2_MAX.sch`; ese directorio no está en el árbol y
+nunca lo estuvo. Lo que sí existe es `XSCHEM_v2/DECODER_MAX.sch` —el
+decodificador de máximo— instanciado por `XSCHEM_v2/GRADIENT3.sch`. El top no
+instancia ninguno de los dos.
 
 ---
 

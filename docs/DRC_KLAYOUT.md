@@ -12,7 +12,9 @@ layouts generados con `coil_layout` sobre GF180MCU.
 > más pequeño, con DRC de firma limpio y **LVS que casa** (§15).
 >
 > **Hay un tercer top**, `GRADIENT_NAV2`, que es el navegador montado con `GRADIENT2`
-> —el de la cadena lineal— en vez de con `GRADIENT`: **418.24 × 413.53 µm = 0.1730 mm²**,
+> —el de la cadena lineal— en vez de con `GRADIENT`: **418.24 × 413.53 µm = 0.1730 mm²**
+> cuando se escribió esto; se rehizo después y hoy mide **460.90 × 386.99 µm**, y
+> el que se fabrica es su reordenado `GRADIENT_NAV2_V3` (`HANDOFF.md` §5). Sigue con
 > DRC de firma limpio y **55/55 nets con 0 cortos** (§15.4). Construirlo destapó un fallo
 > que llevaba escondido desde que existe `OPAM_LIN_flat`: **magic traza los puertos a
 > través del cuerpo de una resistencia de poly**, así que su LEF declaraba como `OUT`

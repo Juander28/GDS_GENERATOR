@@ -119,6 +119,12 @@ The top is **31 macros**: 12 `OPAM`, 12 `COMP`, 4 `DECODER`, 3 `WEIGHT_COMP`.
 
 ## The top
 
+**OJO: esta sección describe `GRADIENT_NAV`, el top de la v1**, que es con el
+que se escribió. **NO es el chip.** El que se fabrica es `GRADIENT_NAV2_V3`,
+460.90 × 386.99 µm, y su estado está en `HANDOFF.md` §5. Esta se deja porque es
+donde está explicado cómo funciona el empaquetado por estanterías y por qué la
+malla va como va, que sigue valiendo para los tres tops.
+
 | | |
 |---|---|
 | Die | 371.70 × 408.52 µm, 151 847 µm², proporción **1.099** |

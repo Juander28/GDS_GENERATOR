@@ -46,7 +46,19 @@ diseno() {
     #  /bin/cp a proposito: `cp` esta aliasado a `cp -i` y en un bucle se queda
     #  esperando una respuesta que nadie teclea. Y `cp -a`, no `rsync --delete`:
     #  FINAL/ se ACTUALIZA, no se recrea.
-    /bin/cp -a "$ARBOL/." "$DISENO/FINAL/"
+    #  rsync, no `/bin/cp -a`, y solo por una razon: EXCLUIR. Desde que existe
+    #  `waferspace/`, el arbol lleva dentro un PDK entero de 4 GB, un venv de
+    #  180 M y los directorios de run de librelane. `cp -a` los copiaria todos
+    #  al clon -- 4.3 GB de artefactos descargados en el repositorio del
+    #  DISENO. Sin `--delete`: FINAL/ se ACTUALIZA, no se recrea, que es lo que
+    #  hacia `cp -a` y lo que se quiere.
+    rsync -a \
+          --exclude 'waferspace/gf180mcu/' \
+          --exclude 'waferspace/.venv/' \
+          --exclude 'waferspace/librelane/runs/' \
+          --exclude 'waferspace/final/' \
+          --exclude 'waferspace_baseline/' \
+          "$ARBOL/." "$DISENO/FINAL/"
     #  Y fuera los ficheros de bloqueo que deja abierta una presentacion.
     #  `cp -a` los copia como cualquier otro y uno se colo en el commit
     #  c4c8610: 165 bytes de basura en el repositorio del diseño.
@@ -93,7 +105,14 @@ gen() {
     #  destino, un script NUEVO no llegaba nunca: la copia solo refrescaba los
     #  que ya existian alli, y eso es justo como una copia se queda vieja sin
     #  que nadie lo note.
-    rsync -a --exclude '__pycache__/' --exclude '*.pyc' \
+    #  `--delete`, y con el `Makefile` excluido porque se copia aparte justo
+    #  debajo. Sin el, un guion que se MUEVE del arbol deja aqui su copia vieja
+    #  para siempre: al pasar los guiones de wafer.space a `waferspace/flow/`
+    #  quedaron cinco duplicados rancios en `flow_scripts/`, con las rutas
+    #  antiguas cableadas dentro. Nadie los habria vuelto a mirar, y ese es
+    #  justo el fallo que mas caro ha salido en este proyecto.
+    rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' \
+          --exclude 'Makefile' \
           "$ARBOL/openroad/scripts/" "$GEN/flow_scripts/"
     [ -f "$ARBOL/openroad/Makefile" ] && /bin/cp -a "$ARBOL/openroad/Makefile" "$GEN/flow_scripts/"
 
@@ -115,6 +134,29 @@ gen() {
               --exclude '*.lvsdb' --exclude '*.ext' --exclude '*.log' \
               "$ARBOL/../zotnetic_layout/" "$GEN/zotnetic_layout/"
 
+    #  El proyecto de wafer.space: configuracion y flujo, o sea que su sitio es
+    #  este repositorio y no el del diseno. `out/` tampoco: es la salida del
+    #  estudio -- un GDS de 24 MB entre otras cosas -- y la rehace `flow/` en
+    #  segundos a partir del DEF. Ademas la comprobacion de mas abajo abortaria
+    #  la subida al ver un .gds, y tendria razon. Sin el PDK descargado (4 GB), sin el
+    #  venv, sin los runs y sin `final/`, que son todos artefactos que rehace
+    #  `make`. El GDS y el LEF de `ip/gradient_nav2_v3/` NO
+    #  vienen: son enlaces relativos a `openroad/`, que en el arbol de trabajo
+    #  resuelven y aqui no, porque este repositorio guarda los guiones en
+    #  `flow_scripts/` y no tiene `openroad/`. Copiarlos dejaria dos enlaces
+    #  rotos; ademas son artefactos generados, que es justo lo que este
+    #  repositorio no guarda. Los rehace `waferspace_collateral.py`.
+    [ -d "$ARBOL/waferspace" ] && \
+        rsync -a --delete \
+              --exclude 'gf180mcu/' --exclude '.venv/' \
+              --exclude 'librelane/runs/' --exclude 'final/' \
+              --exclude '__pycache__/' --exclude '*.pyc' \
+              --exclude 'src/generated_defines.svh' \
+              --exclude 'ip/gradient_nav2_v3/gds/' \
+              --exclude 'ip/gradient_nav2_v3/lef/' \
+              --exclude 'out*/' \
+              "$ARBOL/waferspace/" "$GEN/waferspace/"
+
     #  NINGUN artefacto generado aqui: pesan cientos de megas, los rehace el
     #  flujo, y uno viejo es como un DRC y un LVS acaban pasando contra el
     #  circuito equivocado. Los `.spice` NO entran en esa lista: los de
@@ -126,6 +168,15 @@ gen() {
     malo=$(cd "$GEN" && git status --porcelain -uall | awk '{print $2}' \
            | grep -E '\.(gds|gds\.gz|lyrdb|ext)$' || true)
     [ -z "$malo" ] || { echo "  ABORTA: artefactos generados:" >&2 ; echo "$malo" >&2 ; exit 1 ; }
+
+    #  Ni un enlace roto. En el arbol de trabajo `waferspace/ip/` apunta a
+    #  `openroad/`, que aqui no existe, y un enlace colgando se sube igual de
+    #  bien que uno bueno: git guarda el texto del destino, no el fichero. El
+    #  clon de otra persona se lo encuentra roto y sin ninguna pista de por que.
+    local roto
+    roto=$(cd "$GEN" && find . -path ./.git -prune -o -type l -print \
+           | while read -r l; do [ -e "$l" ] || echo "$l" ; done)
+    [ -z "$roto" ] || { echo "  ABORTA: enlaces rotos:" >&2 ; echo "$roto" >&2 ; exit 1 ; }
 
     git -C "$GEN" add -A
     echo "  ficheros que cambian: $(git -C "$GEN" diff --cached --name-only | wc -l)"

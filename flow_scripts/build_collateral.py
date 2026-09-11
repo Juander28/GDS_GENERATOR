@@ -720,6 +720,22 @@ def write_lib(block: str, dirs: dict[str, str], path: Path) -> None:
         '  nom_voltage                    : 5.0;',
         '  nom_temperature                : 25.0;',
         '  nom_process                    : 1.0;',
+        #  OpenSTA REFUSES a library with no thresholds -- "Library <name> is
+        #  missing one or more thresholds" -- and refusing is the whole run, not
+        #  this cell. The block flow never noticed because it never puts these
+        #  views through STA; the wafer.space flow does, at its first stage.
+        #  The numbers are copied from gf180mcu_fd_sc_mcu7t5v0 rather than
+        #  invented, so a signal crossing from a standard cell into this macro
+        #  is measured against the same edges on both sides.
+        '  input_threshold_pct_rise       : 50.0;',
+        '  input_threshold_pct_fall       : 50.0;',
+        '  output_threshold_pct_rise      : 50.0;',
+        '  output_threshold_pct_fall      : 50.0;',
+        '  slew_lower_threshold_pct_rise  : 30.0;',
+        '  slew_upper_threshold_pct_rise  : 70.0;',
+        '  slew_lower_threshold_pct_fall  : 30.0;',
+        '  slew_upper_threshold_pct_fall  : 70.0;',
+        '  slew_derate_from_library       : 0.5;',
         '',
         f'  cell ({block}) {{',
         '    is_macro_cell : true;',

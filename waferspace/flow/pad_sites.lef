@@ -1,0 +1,29 @@
+VERSION 5.7 ;
+BUSBITCHARS "[]" ;
+DIVIDERCHAR "/" ;
+
+#  Los sitios del anillo de pads.
+#
+#  El LEF de gf180mcu_fd_io NO los define -- sus celdas los referencian y odb
+#  avisa con "references unknown site GF_IO_Site" -- asi que hay que crearlos.
+#  librelane hace lo mismo por otra via, con PAD_FAKE_SITES en el config.tcl de
+#  la libreria de pads:
+#
+#      dict set ::env(PAD_FAKE_SITES) "GF_IO_Site"  "0.1, 355"
+#      dict set ::env(PAD_FAKE_SITES) "GF_COR_Site" "355, 355"
+#
+#  Las medidas de aqui son esas mismas, para que el anillo salga identico al que
+#  monta el flujo del fabricante. 0.1 um es el paso minimo de relleno, de donde
+#  sale el redondeo del reparto de cada fila.
+
+SITE GF_IO_Site
+  CLASS PAD ;
+  SIZE 0.1 BY 350 ;
+END GF_IO_Site
+
+SITE GF_COR_Site
+  CLASS PAD ;
+  SIZE 355 BY 355 ;
+END GF_COR_Site
+
+END LIBRARY

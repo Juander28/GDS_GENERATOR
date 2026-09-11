@@ -1,0 +1,124 @@
+#  Hard macros of the Zotnetic quarter slot.
+#
+#  Five of them are wafer.space's and are not ours to move: the QR code, the
+#  shuttle and project ids, the marker and the logo. They sit in the die
+#  corners, outside the core, and chip_top.sv instantiates them with (* keep *).
+#  Only the logo may be removed, and it is kept.
+#
+#  The template's two demonstration SRAMs are gone. The core of this chip is one
+#  analog block and nothing else, so there is no logic to give them.
+
+MACROS:
+  gf180mcu_ws_ip__qrcode_id:
+    gds:
+      - dir::../ip/gf180mcu_ws_ip__qrcode_id/gds/gf180mcu_ws_ip__qrcode_id.gds
+    lef:
+      - dir::../ip/gf180mcu_ws_ip__qrcode_id/lef/gf180mcu_ws_ip__qrcode_id.lef
+    vh:
+      - dir::../ip/gf180mcu_ws_ip__qrcode_id/vh/gf180mcu_ws_ip__qrcode_id.v
+    lib:
+      "*":
+        - dir::../ip/gf180mcu_ws_ip__qrcode_id/lib/gf180mcu_ws_ip__qrcode_id.lib
+    instances:
+      qrcode_id:
+        location: [26, 26]
+        orientation: N
+
+  gf180mcu_ws_ip__shuttle_id:
+    gds:
+      - dir::../ip/gf180mcu_ws_ip__shuttle_id/gds/gf180mcu_ws_ip__shuttle_id.gds
+    lef:
+      - dir::../ip/gf180mcu_ws_ip__shuttle_id/lef/gf180mcu_ws_ip__shuttle_id.lef
+    vh:
+      - dir::../ip/gf180mcu_ws_ip__shuttle_id/vh/gf180mcu_ws_ip__shuttle_id.v
+    lib:
+      "*":
+        - dir::../ip/gf180mcu_ws_ip__shuttle_id/lib/gf180mcu_ws_ip__shuttle_id.lib
+    instances:
+      shuttle_id:
+        location: [26, 175.6]
+        orientation: E
+
+  gf180mcu_ws_ip__project_id:
+    gds:
+      - dir::../ip/gf180mcu_ws_ip__project_id/gds/gf180mcu_ws_ip__project_id.gds
+    lef:
+      - dir::../ip/gf180mcu_ws_ip__project_id/lef/gf180mcu_ws_ip__project_id.lef
+    vh:
+      - dir::../ip/gf180mcu_ws_ip__project_id/vh/gf180mcu_ws_ip__project_id.v
+    lib:
+      "*":
+        - dir::../ip/gf180mcu_ws_ip__project_id/lib/gf180mcu_ws_ip__project_id.lib
+    instances:
+      project_id:
+        location: [175.6, 26]
+        orientation: N
+
+  gf180mcu_ws_ip__marker:
+    gds:
+      - dir::../ip/gf180mcu_ws_ip__marker/gds/gf180mcu_ws_ip__marker.gds
+    lef:
+      - dir::../ip/gf180mcu_ws_ip__marker/lef/gf180mcu_ws_ip__marker.lef
+    vh:
+      - dir::../ip/gf180mcu_ws_ip__marker/vh/gf180mcu_ws_ip__marker.v
+    lib:
+      "*":
+        - dir::../ip/gf180mcu_ws_ip__marker/lib/gf180mcu_ws_ip__marker.lib
+    instances:
+      marker:
+        location: ["expr::($DIE_AREA[2] - (245 + 36))", "expr::($DIE_AREA[3] - (245 + 36))"]
+        orientation: N
+
+  gf180mcu_ws_ip__logo:
+    gds:
+      - dir::../ip/gf180mcu_ws_ip__logo/gds/gf180mcu_ws_ip__logo.gds
+    lef:
+      - dir::../ip/gf180mcu_ws_ip__logo/lef/gf180mcu_ws_ip__logo.lef
+    vh:
+      - dir::../ip/gf180mcu_ws_ip__logo/vh/gf180mcu_ws_ip__logo.v
+    lib:
+      "*":
+        - dir::../ip/gf180mcu_ws_ip__logo/lib/gf180mcu_ws_ip__logo.lib
+    instances:
+      wafer_space_logo:
+        location: [26, "expr::$DIE_AREA[3] - 169.25"]
+        orientation: N
+
+  #  ------------------------------------------------------------------------
+  #  The chip.
+  #
+  #  460.90 x 386.99 um, placed flush into the TOP-LEFT corner of the core:
+  #
+  #      x  442.00 .. 902.90        CORE_AREA[0] .. + 460.90
+  #      y 1702.01 .. 2089.00       CORE_AREA[3] - 386.99 .. CORE_AREA[3]
+  #
+  #  `location` is the lower-left corner of the placed box, orientation already
+  #  applied -- checked against odb rather than assumed, because for a mirrored
+  #  macro the difference is a whole cell height.
+  #
+  #  FS is a mirror about the horizontal axis, and it is what makes the corner
+  #  work. As drawn, the eight analog inputs come out of the BOTTOM edge; the
+  #  four magnetoresistive bridges would then have to go down 387 um, round a
+  #  block that is a solid obstruction on all five metals, and climb back up to
+  #  the north pads. Mirrored, they come out of the top edge at y = 2089.00 --
+  #  the core ceiling -- 66 um below the pad ring, in a straight line. The power
+  #  stubs stay on the left edge facing the west pads, and the three outputs
+  #  stay on the right, pointing into the core, which is the one direction a
+  #  digital router is good at.
+  GRADIENT_NAV2_V3:
+    gds:
+      - dir::../ip/gradient_nav2_v3/gds/GRADIENT_NAV2_V3.gds
+    lef:
+      - dir::../ip/gradient_nav2_v3/lef/GRADIENT_NAV2_V3.lef
+    vh:
+      - dir::../ip/gradient_nav2_v3/vh/GRADIENT_NAV2_V3.v
+    lib:
+      "*":
+        - dir::../ip/gradient_nav2_v3/lib/GRADIENT_NAV2_V3.lib
+    instances:
+      i_chip_core.u_nav:
+        location: [442, 1702.01]
+        orientation: FS
+
+PDN_MACRO_CONNECTIONS:
+- "i_chip_core.u_nav VDD VSS VDD VSS"

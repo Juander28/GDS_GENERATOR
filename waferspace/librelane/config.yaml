@@ -1,0 +1,263 @@
+meta:
+  version: 3
+  flow: Chip
+  substituting_steps:
+
+    # Render the layout after sealring insertion
+    KLayout.Render: null
+    +KLayout.SealRing: KLayout.Render
+
+    # Disable KLayout DRC
+    #KLayout.DRC: null
+    #Checker.KLayoutDRC: null
+
+    # Disable KLayout antenna check
+    #KLayout.Antenna: null
+    #Checker.KLayoutAntenna: null
+
+    # Disable KLayout density check
+    #KLayout.Density: null
+    #Checker.KLayoutDensity: null
+
+    # Save time during development
+    # Enable for sign-off
+    #OpenROAD.IRDropReport: null
+    #Magic.DRC: null
+    #Checker.MagicDRC: null
+    #KLayout.XOR: null
+    #Netgen.LVS: null
+    #Checker.LVS: null
+
+DESIGN_NAME: chip_top
+VERILOG_FILES:
+- dir::../src/chip_top.sv
+- dir::../src/chip_core.sv
+
+# Enable plugin for better SystemVerilog support
+# USE_SLANG: True
+# SLANG_ARGUMENTS: ['--keep-hierarchy']
+
+# Slightly smaller file sizes
+PRIMARY_GDSII_STREAMOUT_TOOL: klayout
+
+# SDC files
+PNR_SDC_FILE: dir::chip_top.sdc
+SIGNOFF_SDC_FILE: dir::chip_top.sdc
+FALLBACK_SDC: dir::chip_top.sdc
+
+# Power / ground nets
+VDD_NETS:
+- VDD
+GND_NETS:
+- VSS
+
+# We need to add gf180mcu_fd_io__bi_24t
+# due to the unused Y output for output only pads
+IGNORE_DISCONNECTED_MODULES:
+- gf180mcu_fd_io__bi_24t
+# Six of the block's nine outputs are deliberately not bonded: XN is the exact
+# complement of XP, so the pair carries no more than XP alone. See chip_core.sv.
+- GRADIENT_NAV2_V3
+- gf180mcu_ws_ip__qrcode_id
+- gf180mcu_ws_ip__shuttle_id
+- gf180mcu_ws_ip__project_id
+- gf180mcu_ws_ip__logo
+- gf180mcu_ws_ip__marker
+
+# Clock
+CLOCK_PORT: clk_PAD
+CLOCK_NET: clk_pad/Y
+CLOCK_PERIOD: 40 # 25 MHz
+
+# Overfix hold violations
+PL_RESIZER_HOLD_SLACK_MARGIN: 0.35
+GRT_RESIZER_HOLD_SLACK_MARGIN: 0.3
+
+# Increase density for more 
+# logic on your die
+PL_TARGET_DENSITY_PCT: 35
+GRT_ALLOW_CONGESTION: true
+
+# Allow a larger Y displacement
+PL_MAX_DISPLACEMENT_Y: 200
+
+# Fix antenna violations after DRT
+DRT_ANTENNA_REPAIR_ITERS: 10
+DRT_ANTENNA_REPAIR_MARGIN: 10 # %
+
+# PDN
+PDN_CFG: dir::pdn/pdn_cfg.tcl
+PDN_ENABLE_PINS: False
+
+# PDN - Straps
+PDN_VWIDTH: 5
+PDN_HWIDTH: 5
+PDN_VSPACING: 1
+PDN_HSPACING: 1
+PDN_VPITCH: 75
+PDN_HPITCH: 75
+
+# PDN - Core ring
+#
+# 30 um, not the template's 25, and the reason is electromigration rather than
+# taste. The tech-LEF gives Metal1-4 a DCCURRENTDENSITY AVERAGE of 0.67 mA per
+# um of width; the block draws up to 31 mA. At 25 um each side of the ring
+# carries 16.75 mA -- the ring is closed, so a cut of the die crosses two of
+# them, 33.5 mA, which clears 31 by 8 %. At 30 um it is 20.1 and 40.2 mA, a
+# third of margin. 30 is the ceiling: past it the metal has to be slotted.
+#
+# None of this is checked by any DRC. It is checked by
+# openroad/scripts/check_current_density.py, run on the routed DEF.
+PDN_CORE_RING: True
+# Maximum metal width without slotting: 30um
+PDN_CORE_RING_VWIDTH: 30
+PDN_CORE_RING_HWIDTH: 30
+PDN_CORE_RING_CONNECT_TO_PADS: True
+PDN_CORE_VERTICAL_LAYER: Metal4
+PDN_CORE_HORIZONTAL_LAYER: Metal3
+# PDN_CORE_RING_CONNECT_TO_PAD_LAYERS: [Metal2]
+#
+# Commented out, and the reason is worth reading before someone puts it back.
+# It narrows -connect_to_pads down to Metal2, and it exists ONLY on librelane's
+# `dev` branch -- no release knows the key, 3.0.14 included, and an unknown key
+# makes librelane refuse the whole configuration before doing anything.
+#
+# It is not our configuration that trips on it: the UNMODIFIED template fails on
+# exactly this key too, and then on a missing pad module, because this PDK
+# declares CELL_LIBS and only `dev` still reads that name. Both were run side by
+# side before anything of ours was blamed.
+#
+# `dev` was tried and does not work here either, for a different reason: its
+# synthesis script calls the yosys pass `arith_tree`, and the container has
+# yosys 0.64, which has no such pass. So this project runs on the released
+# 3.0.14 and pays for it with the two variables below.
+#
+# See ZOTNETIC.md.
+
+# Do not error on magic DRC violations
+# Note: Passing magic DRC is not required for the submission.
+# However, it is recommended to fix or carefully review all violations.
+ERROR_ON_MAGIC_DRC: False
+
+# Prevent false positive DRC errors in I/O cells
+MAGIC_GDS_FLATGLOB:
+# For contacts
+- "*_CDNS_*"
+# Foundry provided SRAMs
+- "*$$*"
+- "M1_N*"
+- "M1_P*"
+- "M2_M1*"
+- "M3_M2*"
+- "nmos_5p0*"
+- "nmos_1p2*"
+- "pmos_5p0*"
+- "pmos_1p2*"
+- "via1_*"
+- "ypass_gate*"
+- "G_ring_*"
+# These additional cells must be flattened to get rid of 3.3V devices
+# (DUALGATE drawn into high-level cells)
+- "dcap_103*"
+- "din_*"
+- "mux821_*"
+- "rdummy_*"
+- "pmoscap_*"
+- "xdec_*"
+- "ypredec*"
+- "xpredec*"
+- "prexdec_*"
+- "xdec8_*"
+- "xdec16_*"
+- "xdec32_*"
+- "sa_*"
+
+# Since we cannot meet the minimum density limit on Metal2,
+# ignore active metal on previous and subsequent layers
+# (DM.5_DM.7 and DM.4_DM.6). Dummy metal is moved to active
+# metal during the precheck.
+KLAYOUT_FILLER_OPTIONS:
+  Metal2_ignore_active: true
+
+# Because we have multiple power pads for one power domain
+MAGIC_EXT_UNIQUE: notopports
+
+# Image render settings
+KLAYOUT_RENDER_RESOLUTION: 2048
+KLAYOUT_RENDER_OVERSAMPLING: 3
+KLAYOUT_PROPERTIES: dir::gf180mcu_render.lyp
+
+# DRC settings
+# A high number of workers increases RAM usage,
+# but can significantly improve the performance.
+# workers * threads should equal the available
+# hardware threads for a best possible utilization.
+
+KLAYOUT_DRC_THREADS: 1
+
+# "max" equals max hardware threads
+KLAYOUT_DRC_OPTIONS:
+  decks: "all,-antenna,-density,-cup" # disable CUP for now
+  variant: ref::$PDK
+  workers: max
+
+KLAYOUT_DENSITY_OPTIONS:
+  decks: "density"
+  variant: ref::$PDK
+  workers: max
+
+KLAYOUT_ANTENNA_OPTIONS:
+  decks: "antenna"
+  variant: ref::$PDK
+  workers: max
+
+
+# ---------------------------------------------------------------------------
+#  PDK compatibility, for librelane 3.0.14 against a `dev`-era gf180mcuD
+# ---------------------------------------------------------------------------
+#  This PDK publishes its Liberty views as CELL_LIBS and PAD_LIBS. Released
+#  librelane composes neither into LIB -- it does not know the name CELL_LIBS at
+#  all -- so LIB comes out empty and yosys gets no library: no standard cells to
+#  map onto and no definition for any pad, which is what the
+#  "gf180mcu_fd_io__asig_5p0 is not part of the design" error really was.
+#
+#  Written out here rather than patched into the PDK, because the PDK is a
+#  downloaded artefact and a patch to it would not survive `make clone-pdk`.
+LIB:
+  "*_tt_025C_5v00":
+  - pdk_dir::libs.ref/gf180mcu_fd_sc_mcu7t5v0/lib/gf180mcu_fd_sc_mcu7t5v0__tt_025C_5v00.lib
+  - pdk_dir::libs.ref/gf180mcu_fd_io/lib/gf180mcu_fd_io__tt_025C_5v00.lib
+  "*_ff_n40C_5v50":
+  - pdk_dir::libs.ref/gf180mcu_fd_sc_mcu7t5v0/lib/gf180mcu_fd_sc_mcu7t5v0__ff_n40C_5v50.lib
+  - pdk_dir::libs.ref/gf180mcu_fd_io/lib/gf180mcu_fd_io__ff_n40C_5v50.lib
+  "*_ss_125C_4v50":
+  - pdk_dir::libs.ref/gf180mcu_fd_sc_mcu7t5v0/lib/gf180mcu_fd_sc_mcu7t5v0__ss_125C_4v50.lib
+  - pdk_dir::libs.ref/gf180mcu_fd_io/lib/gf180mcu_fd_io__ss_125C_4v50.lib
+
+#  And the pad cells' Verilog, for the same reason: released librelane only
+#  feeds PAD_VERILOG_MODELS to yosys when it is building powered black boxes,
+#  and falls back to the Liberty otherwise. EXTRA_VERILOG_MODELS it always
+#  reads.
+EXTRA_VERILOG_MODELS:
+- pdk_dir::libs.ref/gf180mcu_fd_io/verilog/gf180mcu_fd_io__blackbox_pp.v
+
+#  And the corner names. This PDK sets DEFAULT_CORNER to the PREFIX "nom_",
+#  while the Liberty views above are keyed "*_tt_025C_5v00" and the real corner
+#  is "nom_tt_025C_5v00". Released librelane matches the corner it is given
+#  against those globs, so with the bare prefix nothing matches and the
+#  synthesis library comes out empty -- which surfaces late and obscurely, as
+#  dfflibmap complaining that it has no `-liberty`. Naming the corner in full
+#  fixes it, and pinning the synthesis corner is worth doing on its own account.
+DEFAULT_CORNER: nom_tt_025C_5v00
+SYNTH_CORNER: nom_tt_025C_5v00
+
+#  And PAD_LIBS is emptied, which looks like throwing the pad timing away and is
+#  not: the pad Liberty is already in LIB above, for all three corners.
+#
+#  The variable is declared as a corner->files map and this PDK fills it in as
+#  one, but io.tcl in 3.0.2 walks $::env(PAD_LIBS) as a FLAT LIST. The dict
+#  arrives as "key value key value" and the first thing it tries to open is the
+#  key: "Error: cannot read file *_tt_025C_5v00". An empty map -- not null,
+#  which reads as "not given" and falls straight back to the PDK's -- leaves
+#  that loop with nothing to walk.
+PAD_LIBS: {}

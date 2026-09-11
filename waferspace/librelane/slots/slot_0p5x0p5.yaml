@@ -1,0 +1,138 @@
+#  wafer.space 0.5x0.5 (quarter) -- Zotnetic GRADIENT_NAV2_V3
+#
+#  The die and the core are the vendor's and are NOT touched. So is the shape
+#  of the pad ring: 11 south, 17 east, 11 north, 17 west, and the eight power
+#  pads exactly where the template puts them. That matters because librelane's
+#  pad_cfg.tcl spreads each row BY COUNT -- it divides the leftover space by the
+#  number of pads plus one -- so the number of pads per side is what decides
+#  where every pad lands. Change a count and the ring stops matching the
+#  geometry wafer.space documents.
+#
+#  What IS ours is which cell sits at each signal position, and that is free:
+#  every signal cell in gf180mcu_fd_io measures 75 x 350 um -- bi_24t,
+#  asig_5p0, in_c, dvdd, dvss, all of them -- so swapping one for another moves
+#  nothing.
+#
+#  The assignment follows where the macro's pins actually point, with the macro
+#  mirrored (FS) in the top-left corner of the core:
+#
+#    analog inputs  -> macro TOP edge      -> the 8 asig_5p0 go NORTH
+#    XP / YP / ZP   -> macro RIGHT edge    -> three bi_24t go EAST, at the top
+#    VDD / VSS      -> macro LEFT edge     -> the west power pads already there
+#
+#  Order within each row is the order of this list, and the rows run west->east
+#  (south, north) and south->north (east, west). The lists below are written so
+#  the pads come out in the same order as the macro's pins, which is what keeps
+#  the eight analog routes from crossing each other.
+
+FP_SIZING: absolute
+DIE_AREA: [0, 0, 1936, 2531]
+CORE_AREA: [442, 442, 1494, 2089]
+
+VERILOG_DEFINES: ["SLOT_0P5X0P5"]
+
+#  ---------------------------------------------------------------------------
+#  SOUTH -- 11.  Nothing of ours: clock, reset, a power pair and seven spare
+#  bidirs. They are kept rather than removed, see the note about counts above.
+PAD_SOUTH: [
+    clk_pad,
+    rst_n_pad,
+
+    "dvss_pads\\[0\\].pad",
+    "dvdd_pads\\[0\\].pad",
+
+    "bidir\\[3\\].pad",
+    "bidir\\[4\\].pad",
+    "bidir\\[5\\].pad",
+    "bidir\\[6\\].pad",
+    "bidir\\[7\\].pad",
+    "bidir\\[8\\].pad",
+    "bidir\\[9\\].pad"
+]
+
+#  ---------------------------------------------------------------------------
+#  EAST -- 17, listed south to north.  The three real outputs sit at the very
+#  top of the row because that is where the macro's right edge is: mirrored and
+#  placed at y = 1702.01, ZP comes out at y ~ 1781, YP ~ 1832 and XP ~ 1872.
+#  Listing them bottom-up in that same order keeps the three nets parallel.
+PAD_EAST: [
+    "bidir\\[10\\].pad",
+    "bidir\\[11\\].pad",
+    "bidir\\[12\\].pad",
+    "bidir\\[13\\].pad",
+    "bidir\\[14\\].pad",
+    "bidir\\[15\\].pad",
+    "bidir\\[16\\].pad",
+    "bidir\\[17\\].pad",
+
+    "dvss_pads\\[1\\].pad",
+    "dvdd_pads\\[1\\].pad",
+
+    "bidir\\[18\\].pad",
+    "bidir\\[19\\].pad",
+    "bidir\\[20\\].pad",
+    "bidir\\[21\\].pad",
+
+    "bidir\\[0\\].pad",
+    "bidir\\[1\\].pad",
+    "bidir\\[2\\].pad"
+]
+
+#  ---------------------------------------------------------------------------
+#  NORTH -- 11, listed west to east.  Eight asig_5p0 instead of the template's
+#  four: the block has four magnetoresistive bridges and every one of them is
+#  differential, so all eight ends come out.
+#
+#  The order is the order of the pins along the macro's top edge,
+#
+#      S1P  S1N | S2N  S2P |     | S3P  S3N | S4N  S4P
+#      25.3 30.4  35.4 40.5        136.2 141.3 146.3 151.3   um from its left
+#
+#  which is why S2N comes before S2P and S4N before S4P -- that is how they are
+#  drawn, and following the drawing is what stops the pairs from crossing. The
+#  two power pads keep the template's positions, splitting the row in the
+#  middle; the gap they leave falls between the S2 pair and the S3 pair, which
+#  is the one place in the row where no pair gets separated.
+PAD_NORTH: [
+    "analog\\[0\\].pad",
+    "analog\\[1\\].pad",
+
+    "dvss_pads\\[2\\].pad",
+    "dvdd_pads\\[2\\].pad",
+
+    "analog\\[2\\].pad",
+    "analog\\[3\\].pad",
+    "analog\\[4\\].pad",
+    "analog\\[5\\].pad",
+    "analog\\[6\\].pad",
+    "analog\\[7\\].pad",
+
+    "bidir\\[22\\].pad"
+]
+
+#  ---------------------------------------------------------------------------
+#  WEST -- 17, listed south to north.  Untouched from the template: the core
+#  VDD/VSS pair and the four inputs stay where the vendor puts them. The macro's
+#  power stubs are on its left edge, facing this row.
+PAD_WEST: [
+    "bidir\\[23\\].pad",
+    "bidir\\[24\\].pad",
+    "bidir\\[25\\].pad",
+    "bidir\\[26\\].pad",
+    "bidir\\[27\\].pad",
+    "bidir\\[28\\].pad",
+    "bidir\\[29\\].pad",
+    "bidir\\[30\\].pad",
+    "bidir\\[31\\].pad",
+    "bidir\\[32\\].pad",
+    "bidir\\[33\\].pad",
+
+    "inputs\\[3\\].pad",
+    "inputs\\[2\\].pad",
+
+    "vss_pads\\[0\\].pad",
+    "vdd_pads\\[0\\].pad",
+
+    "inputs\\[1\\].pad",
+    "inputs\\[0\\].pad"
+]
